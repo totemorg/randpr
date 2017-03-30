@@ -7,7 +7,7 @@ var															// shortcuts
 
 var RP = module.exports = {
 	E: [],    // ensemble 
-	H: [], 	// holding times [s]
+	H: [], 	// ensemble holding times [s]
 	N: 50, // ensemble size
 	K: 2, // #states
 
@@ -21,18 +21,17 @@ var RP = module.exports = {
 	dT: 0, // sample time [s]
 	
 	// multi-state gauss mixing parameters
-	mu: null,  // means   [m]
-	sigma: null,  // sigmas  [m]
-	A: null,  .. // jump rate matrix [from, ... ][to, ...] in [jumps/s]
-	B: null,
+	mu: null,  // Mx1 mean lists [m]
+	sigma: null,  // Mx1 sigma list [m]
+	A: null,  // KxK from-to jump rate matrix [jumps/s]
+	P: null,  // KxK from-to cummulative transition pr matrix
 	
-	gill: function (fr, A, B) {
-		for (var B0=0,k=0,K=A.length; k<K; B0+=B[k], k++)
-			B[k] = B0 + (k == fr) ? 0 : A[k] / A[fr];	
-	
-		for (var k=0; k<K; k++) B[k] /= B0;
-	
-		for (var u=Math.rand(),k=0; k<K; k++) if ( B[k] > u ) return k;
+	gill: function (fr, A, P) {
+
+		if (K = A.length == 2)
+			return (fr + 1) % 2;
+
+		for (var u=Math.rand(),k=0; k<K; k++) if ( P[k] > u ) return k;
 		return fr;
 	},
 
@@ -43,10 +42,10 @@ var RP = module.exports = {
 		var N = RP.N;
 		var E = RP.E = new Array(N);
 		var H = RP.H = new Array(N);
-		var B = RP.B = new Array(K);
+		var P = RP.P = new Array(K);
 		
 		if (RP.mu || RP.sigma) { // multi-state guass mixing process
-			var A = RP.A = [];	
+			var A = RP.A = [];
 		}
 		else
 		if (p = RP.p || Tc = RP.Tc) {  // two-state markov process via p,Tc parms
@@ -72,13 +71,24 @@ var RP = module.exports = {
 		if (1/RP.dT < 2/RP.Tc)
 			console.log("Woo there cowboy - your frame rate is subNyquist");
 		
+		// define cummulative from-to pr transition matrix using Gillispie model
+
+		var P = RP.P = new Array(K);
+		for (var k=0; k<K; k++) P[k] = new Array(K);
+
+		for (var fr=0; fr<K; fr++) 
+			for (var B0=0,to=0,Pfr=P[fr],Afr=A[fr]; to<K; B0+=Pfr[to], to++)
+				Pfr[to] = B0 + (to == fr) ? 0 : Afr[to] / Afr[fr];
+	
+		for (var to=0; to<K; to++) Pfr[to] /= B0;
+
 		// initialize the ensemble
 
 		if (mu || sigma) // multi-state guass mix
 			for (var gill=RP.gill, n=0; n<N; n++) {
 				var 
-						fr = Math.floor(Math.rand() * K),
-						to = gill( fr, A[fr], B );
+					fr = Math.floor(Math.rand() * K),
+					to = gill( fr, A[fr], B );
 				
 				E[n] = fr;
 				H[n] = expdev(1/A[fr][to]);
