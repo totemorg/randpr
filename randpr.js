@@ -16,7 +16,8 @@ var RP = module.exports = {
 	J: null, 	// KxK from-to jump counts
 	A: null,	// KxK from-to jump rate matrix [jumps/s]
 	P: null,	// KxK from-to cummulative transition pr matrix
-	pi: null, 	// K equilibrium probs
+	pi: null, 	// K equilibrium probs (default = 1/K)
+	sym: null, 	// K state symbols (default = 0:K-1)
 
 	// two-state markov parameters
 	alpha: 0,  // on-to-off rate [jumps/s]
@@ -59,8 +60,6 @@ var RP = module.exports = {
 			//console.log(["ga",fr,Pfr]);
 		}
 		
-		if (K == 2) return (fr + 1) % 2;
-
 		switch (RP.jumpModel) {
 			case "off":
 				break;
@@ -74,31 +73,35 @@ var RP = module.exports = {
 				break;
 		}
 
-		for (var Pfr = P[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
+		if (K == 2) 
+			to = (fr + 1) % 2;
+		else
+			for (var Pfr = P[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
 
-		R[fr][fr] = expdev(R[fr][to]);
+		var h = R[fr][fr] = expdev(R[fr][to]);
 		RP.jumps++;
-		RP.J[fr][to]++;
+
+		//RP.J[fr][to]++;
 		
 		return to;
 	},
 	
 	step: function (cb) {
-		var E=RP.E,H=RP.H,R=RP.R,jump=RP.jump;
+		var E=RP.E,H=RP.H,R=RP.R,I=RP.I;
+		var jump=RP.jump, floor = Math.floor;
 		var t = RP.t += RP.dt, steps = RP.steps++;
 		var x = RP.x;
 		
-		for (var n=0,N=RP.N; n<N; n++) {
-			if ( t > H[n] ) {
+		cb = cb || function () {};
+
+		for (var n=0, N=RP.N; n<N; n++) {  // scan the ensemble
+			if ( t > H[n] ) {  // holding time exceeded so jump state
 				var fr = E[n], to = E[n] = jump( fr ), h = R[fr][to];
-				H[n] += expdev( h );
-				if (cb) cb(n,fr,to,h,x);
-				//console.log([t,n,fr,to,H[n]]);
+				H[n] += h;  //expdev( h );
+				RP.J[ I[n] ][to] += floor( h/RP.dt );
+				cb(n,fr,to,h,x);
 			}
-			//else
-				//console.log([t,n,E[n],E[n],H[n]]);
 		}
-		//console.log([RP.steps,E]);
 	},
 		
 	run: function (steps, cb) {	
@@ -121,20 +124,28 @@ var RP = module.exports = {
 		return lambda/(K*K-K);
 	},
 	
+	corr: function () {
+		var K = RP.K, J = RP.J, jumps = RP.jumps, sym = RP.sym, cor=0;
+
+		for (var fr=0; fr<K; fr++) for (var Jfr=J[fr],to=0; to<K; to++) cor += sym[fr]*sym[to]*Jfr[to];
+
+		return cor/jumps;
+	},
+
 	config: function (opts, cb) {
 	
 		function matrix(M,N) {
 			var rtn = new Array(M);
+
 			if (N)
 				for (var m=0; m<M; m++) rtn[m] = new Array(N);
+
 			return rtn;
 		}
 
 		if (opts) Copy(opts, RP);
 
 		var N = RP.N;
-		var E = RP.E = matrix(N);
-		var H = RP.H = matrix(N);
 
 		if (RP.A) { // K-state markov
 			var A = RP.A, K = RP.K = A.length;
@@ -157,6 +168,8 @@ var RP = module.exports = {
 		else
 			console.log("Huston we have a problem");
 		
+		// compute nyquist sampling rate
+
 		var dt = RP.dt = Tc/RP.nyquist;
 		
 		if (1/dt < 2/Tc)
@@ -165,17 +178,22 @@ var RP = module.exports = {
 		var P = RP.P = matrix(K,K);
 		var R = RP.R = matrix(K,K);
 		var J = RP.J = matrix(K,K);
+
+		// default state symbols
+	
+		var sym = RP.sym;
+		if ( !sym ) {
+			var sym = matrix(K);
+			for (var fr=0; fr<K; fr++) sym[k] = k;
+		}
 		
 		// default equilib probabilities
 		
-		var pi = RP.pi;
-		
+		var pi = RP.pi;		
 		if ( !pi ) {
 			var pi = RP.pi = matrix(K);
 			for (var fr=0,pi0=1/K; fr<K; fr++) pi[fr] = pi0;
 		}
-		
-		console.log(["pi",pi]);
 		
 		// enforce global balance
 		
@@ -186,54 +204,55 @@ var RP = module.exports = {
 			Afr[fr] = -A0;
 		}
 
-		console.log(["Ainit",A]);
-		
 		// compute holding times
 		
 		for (var fr=0; fr<K; fr++)   
 			for (var to=0, Afr=A[fr], Rfr=R[fr]; to<K; to++) 
 				Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
 		
-		console.log(["Rinit", Tc, R]);
+		var E = RP.E = matrix(N);
+		var H = RP.H = matrix(N);
+		var I = RP.I = matrix(K);
 
 		// initialize poisson jump model
+
 		var jump=RP.jump;
 		
 		for (var fr=0; fr<K; fr++) jump(fr);
 		RP.jumpModel = "off";
 		
-		console.log( ["Pinit",dt,P] );
-		
 		// seed the ensemble
+
 		var floor = Math.floor, rand=Math.random;
 		
+		for (var fr=0; fr<K; fr++) for (var Jfr=J[fr], to=0; to<K; to++) Jfr[to] = 0;
+
 		if (K == 2)  // two-state 
 			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
 				if ( n <= Np ) {
-					E[n] = 1;
-					H[n] = expdev(Ton);
+					var k = I[n] = E[n] = 1;
+					var h = H[n] = expdev(Ton);
 				}
 				else {
-					E[n] = 0;
-					H[n] = expdev(Toff);
+					var k = I[n] = E[n] = 0;
+					var h = H[n] = expdev(Toff);
 				}
+				J[k][k] = floor( h/dt );
 			}
 
-		else  // multi-state guass mix
+		else  // multi-state 
 			for (var n=0; n<N; n++) {
-				E[n] = jump( fr = floor(rand() * K) );
-				H[n] = R[fr][fr];				
+				var k = I[n] = E[n] = jump( fr = floor(rand() * K) );
+				var h = H[n] = R[fr][fr];	
+				J[k][k] = floor( h/dt );
 			}
 
 		// initialize jump counters
-		
+		/*		
+		var jumps = RP.jumps = floor(1/min(pi));
 		for (var fr=0; fr<K; fr++) for (var Jfr=J[fr],to=0; to<K; to++) 
-			Jfr[to] = (fr == to) ? floor( pi[fr] * K ) : 0;
-		
-		console.log(["Jinit",J]);
-		
-		RP.jumps = K;
-		
+			Jfr[to] = (fr == to) ? floor( pi[fr] * jumps ) : 0;
+		*/
 		return RP;
 	}
 };
@@ -242,20 +261,44 @@ function expdev(mean) {
 	return -mean * Math.log(Math.random());
 }
 
+function min(x) {
+	for (var xmin=9e99,n=0,N=x.length; n<N; n++) if (x[n] < xmin) xmin = x[n];
+	return xmin;
+}
+
 var 
 	mvp = {mu: [1,2], sigma: [[.9,.6],[.6,.7]]},
 	mvd = MVN(mvp.mu, mvp.sigma);
 
 RP.config({
 	N: 5,
-	A: [[0,1,2],[3,0,4],[5,6,0]],
-	nyquist: 20,
+	//A: [[0,1,2],[3,0,4],[5,6,0]],
+	//sym: [-1,0,1],
+
+	A: [[0,1],[1,0]], //[[0,1,2],[3,0,4],[5,6,0]],
+	sym: [-1,1],
+	nyquist: 10,
 	mix: mvp,
 	x: []
 	//p: 0,
 	//Tc: 1
-}).run(8, function (n,fr,to,h,x) {
-	x.push( mvd.sample() );
-	console.log(["jump",RP.jumps,RP.steps,n,fr,to,h,RP.J]);	
 });
 
+console.log({
+	jumpRates: RP.A,
+	cumTxPr: RP.P,
+	jumpCounts: RP.J,
+	holdTimes: RP.R,
+	eqPr: RP.pi,
+	Tc: RP.Tc,
+	p: RP.p,
+	dt: RP.dt,
+	cor: RP.corr()
+});
+
+RP.run(10, function (n,fr,to,h,x) {
+	//x.push( mvd.sample() );
+	//console.log(["jump",RP.jumps,RP.steps,n,fr,to,h,RP.J]);
+	console.log([RP.steps,n,fr,to,RP.J]);
+	//console.log( [RP.steps,RP.corr()] );
+});
