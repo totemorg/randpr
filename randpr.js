@@ -22,12 +22,13 @@ var RP = module.exports = {
 	// two-state markov parameters
 	alpha: 0,  // on-to-off rate [jumps/s]
 	beta: 0,  // off-to-on rate [jumps/s]
-	lambda: 0,  // jump rate [jumps/s]
-
 	p: 0,  // on state pr 
 	q: 0,  // off(not on) state pr 
-	Tc: 1000,  // coherence time [s]
-	dt: 1, // sample time [s]
+
+	// K-state parameters
+	lambda: 0,  // average jump rate [jumps/s]
+	Tc: 0,  // coherence time [s]
+	dt: 0, // sample time [s]
 	t: 0, // step time [s]
 	nyquist: 10, // nyquist oversampling rate
 
@@ -105,6 +106,8 @@ var RP = module.exports = {
 				H[n] = t+h;    // advance next-jump time 
 			}
 		}
+
+		RP.gamma = RP.corr();
 	},
 		
 	run: function (steps, cb) {	
@@ -120,14 +123,17 @@ var RP = module.exports = {
 	},
 	
 	corr: function () {
-		var K = RP.K, T = RP.T, jumps = RP.jumps, sym = RP.sym, cor=0, Tmax=0,max=Math.max;
+		var K = RP.K, T = RP.T, jumps = RP.jumps, sym = RP.sym, cor = 0;
 
-		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) {
-			cor += sym[fr]*sym[to]*Tfr[to];
-			Tmax = max(Tmax, Tfr[to]);
+		for (var fr=0; fr<K; fr++) {
+			for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
+			for (var to=0; to<K; to++) 	{
+				cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
+				//console.log([sym[fr], sym[to], Tfr[to], Tsum, cor]);
+			}
 		}
 
-		return cor/Tmax;
+		return cor;
 	},
 
 	rates: function () {
@@ -157,31 +163,39 @@ var RP = module.exports = {
 		var N = RP.N;
 
 		if (RP.A) { // K-state markov
-			var A = RP.A, K = RP.K = A.length;
-			var lambda = RP.lambda = meanValue(A);
-			var Tc = RP.Tc = 2.3/lambda;
 		}
 		else
 		if (RP.p || RP.Tc) {  // two-state markov process via p,Tc parms
-			var p = RP.p, Tc = RP.Tc, q = RP.q = 1 - p, K = RP.K = 2, dt = RP.dt;
-			var alpha = RP.alpha = 2.3 * q / Tc, beta = RP.beta = 2.3 * p / Tc, lambda = RP.lambda = (alpha + beta) / 2;
-			var A = RP.A = [[-alpha, alpha], [beta, -beta]];
-			RP.pi = [p,q];
+			var
+					p = RP.p, 
+					Tc = RP.Tc, 
+					q = RP.q = 1 - p,
+					alpha = RP.alpha = 2.3 * q / Tc, 
+					beta = RP.beta = 2.3 * p / Tc;
+
+			RP.A = [[-alpha, alpha], [beta, -beta]];
+			RP.pi = [p, q];
 		}
 		else
 		if (RP.alpha || RP.beta) { // two-state markov process via alpha,beta parms
-			var alpha = RP.alpha, beta = RP.beta, K = RP.K = 2, dt = RP.dt;
-			var p = RP.p = alpha / (alpha + beta), q = RP.q = 1 - p;
-			var Tc = RP.Tc = 2.3 / lambda, lambda = RP.lambda = (alpha + beta) / 2;
-			var A = RP.A = [[-alpha, alpha], [beta, -beta]];
-			RP.pi = [p,q];			
+			var 
+				alpha = RP.alpha, 
+				beta = RP.beta, 
+				p = RP.p = alpha / (alpha + beta), 
+				q = RP.q = 1 - p;
+
+			RP.A = [[-alpha, alpha], [beta, -beta]];
+			RP.pi = [p, q];			
 		}
 		else
-			console.log("Huston we have a problem");
+			console.log("Houston we have a problem");
 		
 		// compute nyquist sampling rate
 
-		var dt = RP.dt = Tc/RP.nyquist;
+		var A = RP.A, K = RP.K = A.length;
+		var lambda = RP.lambda = meanValue(A);
+		var Tc = RP.Tc = 2.3 / lambda;
+		var dt = RP.dt = Tc / RP.nyquist;
 		
 		if (1/dt < 2/Tc)
 			console.log("Woa there cowboy - your sampling rate is subNyquist");
@@ -191,9 +205,9 @@ var RP = module.exports = {
 		var sym = RP.sym;
 		if ( !sym ) {
 			var sym = matrix(K);
-			for (var fr=0; fr<K; fr++) sym[k] = k;
+			for (var k=0; k<K; k++) sym[k] = k;
 		}
-		
+
 		// default equilib probabilities
 		
 		var pi = RP.pi;		
@@ -203,7 +217,7 @@ var RP = module.exports = {
 		}
 		
 		var p = RP.p = pi[0], q = RP.q = 1-p;
-		
+
 		// enforce global balance
 		
 		for (var fr=0; fr<K; fr++) {  
@@ -244,12 +258,12 @@ var RP = module.exports = {
 		if (K == 2)  // two-state 
 			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
 				if ( n < Np ) {
-					var k = I[n] = E[n] = 0;
-					var h = H[n] = R[0][0] = expdev(Ton);
+					var k = I[n] = E[n] = 1;
+					var h = H[n] = R[1][1] = expdev(Ton);
 				}
 				else {
-					var k = I[n] = E[n] = 1;
-					var h = H[n] = R[1][1] = expdev(Toff);
+					var k = I[n] = E[n] = 0;
+					var h = H[n] = R[0][0] = expdev(Toff);
 				}
 				T[k][k] += h;
 			}
@@ -261,12 +275,13 @@ var RP = module.exports = {
 				T[k][k] += h;
 			}
 
-		/*		
-		// initialize jump counters
-		var jumps = RP.jumps = floor(1/min(pi));
-		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) 
-			Tfr[to] = (fr == to) ? floor( pi[fr] * jumps ) : 0;
-		*/
+		// initial symbol-value normalized correlation
+
+		RP.corr0=0;
+		for (var k=0; k<K; k++) RP.corr0 += sym[k] * sym[k];
+			
+		RP.gamma = RP.corr() / RP.corr0;
+
 		return RP;
 	}
 };
@@ -280,7 +295,7 @@ function meanValue(A) {
 		for (var to=0,Afr=A[fr]; to<K; to++)
 			if ( fr != to ) lambda += Afr[to];
 
-	return lambda/(K*K-K);
+	return lambda / (K*K-K);
 }
 	
 var 
@@ -288,7 +303,7 @@ var
 	mvd = MVN(mvp.mu, mvp.sigma);
 
 RP.config({
-	N: 20,
+	N: 2000,
 	//A: [[0,1,2],[3,0,4],[5,6,0]],
 	//sym: [-1,0,1],
 
@@ -309,13 +324,13 @@ console.log({
 	Tc: RP.Tc,
 	p: RP.p,
 	dt: RP.dt,
-	cor: RP.corr()
+	cor: RP.gamma
 });
 
-RP.run(400, function (n,fr,to,h,x) {
+RP.run(20, function (n,fr,to,h,x) {
 	//x.push( mvd.sample() );
 	//console.log(["jump",RP.jumps,RP.steps,n,fr,to]);
 	//console.log(RP.R);
 	//console.log([RP.steps,n,fr,to,RP.T]);
-	console.log( [RP.steps,RP.corr()] );
+	console.log( [RP.t,RP.gamma, Math.exp(-RP.t/RP.Tc)] );
 });
