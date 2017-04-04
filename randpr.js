@@ -8,32 +8,34 @@ var															// shortcuts
 	Each = ENUM.each;
 
 var RP = module.exports = {
-	E: null,    // N ensemble 
-	H: null, 	// N ensemble next jump times [s]
-	R: null, 	// KxK from-to holding times  [s]
 	N: 0, 		// ensemble size
 	K: 0, 		// #states
-	T: null, 	// KxK from-to jump state times [s]
-	A: null,	// KxK from-to jump rate matrix [jumps/s]
-	P: null,	// KxK from-to cummulative transition pr matrix
-	pi: null, 	// K equilibrium probs (default = 1/K)
-	sym: null, 	// K state symbols (default = 0:K-1)
+	E: null,    // [N] ensemble 
+	H: null, 	// [N] ensemble next jump times [s]
+	R: null, 	// [KxK] from-to holding times  [s]
+	T: null, 	// [KxK] from-to jump state times [s]
+	A: null,	// [KxK] from-to jump rate matrix [jumps/s]
+	P: null,	// [KxK] from-to cummulative transition pr matrix
+	pi: null, 	// [K] equilibrium probs (default = 1/K)
+	sym: null, 	// [K] state symbols (default = 0:K-1)
 
 	// two-state markov parameters
 	alpha: 0,  // on-to-off rate [jumps/s]
 	beta: 0,  // off-to-on rate [jumps/s]
 	lambda: 0,  // jump rate [jumps/s]
+
 	p: 0,  // on state pr 
 	q: 0,  // off(not on) state pr 
 	Tc: 1000,  // coherence time [s]
 	dt: 1, // sample time [s]
 	t: 0, // step time [s]
-	jumpModel: "poisson",
 	nyquist: 10, // nyquist oversampling rate
+
+	jumpModel: "poisson",
 	steps: 0, // step counter	
 	jumps: 0, // number of jumps
-	x: null, // observations
 	reversible: false,
+	x: null, // observations
 	
 	jump: function (fr) {  
 		
