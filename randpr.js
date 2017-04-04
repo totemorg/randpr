@@ -32,8 +32,7 @@ var RP = module.exports = {
 	nyquist: 10, // nyquist oversampling rate
 	steps: 0, // step counter	
 	jumps: 0, // number of jumps
-	mix: null,  // multi-state mixing parameters
-	x: null, // mix observations
+	x: null, // observations
 	reversible: false,
 	
 	jump: function (fr) {  
@@ -294,7 +293,6 @@ RP.config({
 	A: [[0,1],[1,0]], //[[0,1,2],[3,0,4],[5,6,0]],
 	sym: [-1,1],
 	nyquist: 10,
-	mix: mvp,
 	x: []
 	//p: 0,
 	//Tc: 1
