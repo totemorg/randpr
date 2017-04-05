@@ -52,32 +52,12 @@ var RAN = module.exports = {
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
 
-		function Poisson( fr ) {  
-			for (var to=0,Pfr=P[fr],Afr=A[fr],dt=RAN.dt; to<K; to++) 
-				Pfr[to] =  (to == fr) ? 0 : Afr[to]*dt;  // disallows fr-fr jump
-		
-			for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
-			for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
-		}
-		
-		function Gillispie( fr ) {
-			for (var to=0,Pfr=P[fr],Rfr=R[fr],R0=Rfr[fr]; to<K; to++) 
-				Pfr[to] = (to == fr) ? 0 : Rfr[to] / R0;
-
-			for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
-			for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
-		}
-		
 		switch (RAN.jumpModel) {
-			case "off":
-				break;
-				
-			case "poisson": // Poisson jump model
-				Poisson( fr );
+			case "poisson": // Poisson jump model already initialized on config
 				break;
 				
 			case "gillispie":  // Gillispie jump model (use at your own risk)
-				Gillispie( fr );
+				Gillispie( fr, P, R );
 				break;
 		}
 
@@ -130,13 +110,8 @@ var RAN = module.exports = {
 		return RAN;
 	},
 	
-	reset: function () {  // reset the process
-		RAN.t = 0;
-		return RAN;
-	},
-	
 	corr: function () {  // statistical correlation function
-		var K = RAN.K, T = RAN.T, sym = RAN.sym, cor = 0;
+		var K = RAN.K, T = RAN.T, sym = RAN.sym, cor = 0, corr0 = RAN.corr0;
 
 		for (var fr=0; fr<K; fr++) {
 			for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
@@ -144,9 +119,10 @@ var RAN = module.exports = {
 				cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
 		}
 
-		return cor;
+		return cor ;
 	},
 
+	/*
 	rates: function () {  // legacy
 		var K = RAN.K, T = RAN.T, jumps = RAN.jumps, sym = RAN.sym, cor=0, Tmax=0,max=Math.max;
 
@@ -156,7 +132,7 @@ var RAN = module.exports = {
 		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) 
 			Tfr[to] = Tfr[to] / Tmax;
 		
-	},
+	}, */
 	
 	config: function (opts) {  // configure
 	
@@ -246,14 +222,16 @@ var RAN = module.exports = {
 		
 		// initialize poisson jump model
 
-		var jump=RAN.jump;
-		
-		for (var fr=0; fr<K; fr++) jump(fr, function () {});
-		RAN.jumpModel = "off";
+		//for (var fr=0; fr<K; fr++) jump(fr, function () {});
+		//RAN.jumpModel = "off";
 		
 		// seed the ensemble
 
-		var floor = Math.floor, rand=Math.random;
+		for (var fr=0; fr<K; fr++) Poisson( fr, P, A );
+
+		var jump = RAN.jump, floor = Math.floor, rand = Math.random;
+
+		RAN.t = RAN.steps = RAN.jumps = 0;
 		
 		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr], to=0; to<K; to++) Tfr[to] = 0;
 		
@@ -280,7 +258,7 @@ var RAN = module.exports = {
 
 		// initial symbol-value normalized correlation
 
-		RAN.corr0=0;
+		RAN.corr0 = 0;
 		for (var k=0; k<K; k++) RAN.corr0 += sym[k] * sym[k];
 			
 		RAN.gamma = RAN.corr() / RAN.corr0;
@@ -310,13 +288,31 @@ function matrix(M,N) {
 	return rtn;
 }
 
+function Poisson( fr , P, A) {  
+	var K = P.length;
+	for (var to=0,Pfr=P[fr],Afr=A[fr],dt=RAN.dt; to<K; to++) 
+		Pfr[to] =  (to == fr) ? 0 : Afr[to]*dt;  // disallows fr-fr jump
+
+	for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
+	for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
+}
+
+function Gillispie( fr, P, R ) {
+	var K = P.length;
+	for (var to=0,Pfr=P[fr],Rfr=R[fr],R0=Rfr[fr]; to<K; to++) 
+		Pfr[to] = (to == fr) ? 0 : Rfr[to] / R0;
+
+	for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
+	for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
+}
+
 function test() {
 	var 
 		mvp = {mu: [1,2], sigma: [[.9,.6],[.6,.7]]},
 		mvd = RAN.MVN(mvp.mu, mvp.sigma);
 
 	RAN.config({
-		N: 2000,
+		N: 200,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
@@ -348,10 +344,13 @@ function test() {
 		cor: RAN.gamma
 	});
 
-	RAN.run(20, function (y) {
+	RAN.run(40, function (y) {
 		var n = RAN.t / RAN.Tc;
 		// y.push( [n, RAN.gamma, Math.exp(-n)] );
 		console.log( [n, RAN.gamma, Math.exp(-n)] );
 	});
 }
+
+//test();
+
 
