@@ -13,6 +13,7 @@ var RAN = module.exports = {
 	R: null, 	// [KxK] from-to holding times  [s]
 	T: null, 	// [KxK] from-to jump state times [s]
 	A: null,	// [KxK] from-to jump rate matrix [jumps/s]
+	W: null, 	// [KxK] from-to state transition probabilities
 	P: null,	// [KxK] from-to cummulative transition pr matrix
 	pi: null, 	// [K] equilibrium probs (default = 1/K)
 	sym: null, 	// [K] state symbols (default = 0:K-1)
@@ -100,7 +101,8 @@ var RAN = module.exports = {
 			step = RAN.step,
 			stepcb = cb || cb.step || function () {};
 		
-		while (steps--) step(stepcb);
+		steps = Math.floor(steps);
+		while ( steps-- ) step(stepcb);
 
 		if (save = RAN.cb.save) {
 			if (y = RAN.y) save(y,"stepobs");
@@ -119,20 +121,19 @@ var RAN = module.exports = {
 				cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
 		}
 
-		return cor ;
+		return cor / corr0 ;
 	},
 
-	/*
-	rates: function () {  // legacy
-		var K = RAN.K, T = RAN.T, jumps = RAN.jumps, sym = RAN.sym, cor=0, Tmax=0,max=Math.max;
+	txprs: function () {    // compute state transition probs
+		var K = RAN.K, T = RAN.T, W = RAN.W;
 
-		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) 
-			Tmax = max(Tmax, Tfr[to]);
+		for (var fr=0; fr<K; fr++) {
+			for (var Tfr=T[fr], Wfr=W[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
+			for (var to=0; to<K; to++) 	Wfr[to] = Tfr[to] / Tsum;
+		}
 
-		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) 
-			Tfr[to] = Tfr[to] / Tmax;
-		
-	}, */
+		return RAN.W;		
+	},
 	
 	config: function (opts) {  // configure
 	
@@ -210,6 +211,7 @@ var RAN = module.exports = {
 		var R = RAN.R = matrix(K,K);		
 		var P = RAN.P = matrix(K,K);
 		var T = RAN.T = matrix(K,K);
+		var W = RAN.W = matrix(K,K);
 		var E = RAN.E = matrix(N);
 		var H = RAN.H = matrix(N);
 		var I = RAN.I = matrix(N);
@@ -238,22 +240,23 @@ var RAN = module.exports = {
 		if (K == 2)  // two-state 
 			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
 				if ( n < Np ) {
-					var k = I[n] = E[n] = 1;
-					var h = H[n] = R[1][1] = expdev(Ton);
+					var fr = I[n] = 0, to = E[n] = 1;
+					var h = H[n] = R[fr][fr] = expdev(Ton);
 				}
 				else {
-					var k = I[n] = E[n] = 0;
-					var h = H[n] = R[0][0] = expdev(Toff);
+					var fr = I[n] = 1, to = E[n] = 0;
+					var h = H[n] = R[fr][fr] = expdev(Toff);
 				}
-				T[k][k] += h;
+				T[fr][fr] += h;
 			}
 
 		else  // multi-state 
 			for (var n=0; n<N; n++) 
 				jump( fr = floor(rand() * K), function (to,h) {
-					var k = I[n] = E[n] = to;
+					I[n] = fr;
+					E[n] = to;
 					H[n] = h;	
-					T[k][k] += h;
+					T[fr][fr] += h;
 				});
 
 		// initial symbol-value normalized correlation
@@ -261,7 +264,9 @@ var RAN = module.exports = {
 		RAN.corr0 = 0;
 		for (var k=0; k<K; k++) RAN.corr0 += sym[k] * sym[k];
 			
-		RAN.gamma = RAN.corr() / RAN.corr0;
+		RAN.gamma = RAN.corr(); 
+
+		RAN.txprs();
 
 		return RAN;
 	}
@@ -312,22 +317,19 @@ function test() {
 		mvd = RAN.MVN(mvp.mu, mvp.sigma);
 
 	RAN.config({
-		N: 200,
+		N: 100,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
-		A: [[0,1],[1,0]], //[[0,1,2],[3,0,4],[5,6,0]],
+		A: [[0,1],[1,0]], 
 		sym: [-1,1],
+
 		nyquist: 10,
 		x: [],
 		y: [],
 		cb: {
 			jump: function (n,fr,to,h,x) {
 				x.push( mvd.sample() );
-				//console.log(["jump",RAN.jumps,RAN.steps,n,fr,to]);
-				//console.log(RAN.R);
-				//console.log([RAN.steps,n,fr,to,RAN.T]);
-				//console.log(["jump",n]);
 			}
 		}
 	});
@@ -335,7 +337,7 @@ function test() {
 	console.log({
 		jumpRates: RAN.A,
 		cumTxPr: RAN.P,
-		jumpCounts: RAN.T,
+		stateTimes: RAN.T,
 		holdTimes: RAN.R,
 		eqPr: RAN.pi,
 		Tc: RAN.Tc,
@@ -344,11 +346,15 @@ function test() {
 		cor: RAN.gamma
 	});
 
-	RAN.run(40, function (y) {
+	RAN.run(4 * RAN.Tc/RAN.dt, function (y) {
 		var n = RAN.t / RAN.Tc;
 		// y.push( [n, RAN.gamma, Math.exp(-n)] );
-		console.log( [n, RAN.gamma, Math.exp(-n)] );
+		//console.log( [n, RAN.T] );
+		//console.log([RAN.steps, RAN.jumps]);
+		//console.log(RAN.txprs());
+		console.log( [n.toFixed(3), RAN.gamma.toFixed(3), Math.exp(-n).toFixed(3) ] );
 	});
+
 }
 
 //test();
