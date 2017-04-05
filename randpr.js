@@ -37,36 +37,35 @@ var RAN = module.exports = {
 	x: null, // jump observations
 	y: null, // step observations
 
+	// external pkgs
+	
 	MVN: require("multivariate-normal").default,
 	MLE: require("expectation-maximization"),
 	
-	cb: {
-		jump: function () {},
-		step: function () {}
+	cb: {  // callbacks
+		jump: null,  // on jump
+		step: null, 	// on step
+		save: null		// on run end
 	},
 
-	jump: function (fr, cb) {  
+	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
 
-		function Poisson( fr ) {
+		function Poisson( fr ) {  
 			for (var to=0,Pfr=P[fr],Afr=A[fr],dt=RAN.dt; to<K; to++) 
 				Pfr[to] =  (to == fr) ? 0 : Afr[to]*dt;  // disallows fr-fr jump
 		
-			//console.log(["pb",fr,Pfr]);
 			for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
 			for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
-			//console.log(["pa",fr,Pfr]);
 		}
 		
 		function Gillispie( fr ) {
 			for (var to=0,Pfr=P[fr],Rfr=R[fr],R0=Rfr[fr]; to<K; to++) 
 				Pfr[to] = (to == fr) ? 0 : Rfr[to] / R0;
 
-			//console.log(["gb",fr,Pfr]);
 			for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
 			for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
-			//console.log(["ga",fr,Pfr]);
 		}
 		
 		switch (RAN.jumpModel) {
@@ -77,7 +76,7 @@ var RAN = module.exports = {
 				Poisson( fr );
 				break;
 				
-			case "gillispie":  // Gillispie jump model
+			case "gillispie":  // Gillispie jump model (use at your own risk)
 				Gillispie( fr );
 				break;
 		}
@@ -94,62 +93,61 @@ var RAN = module.exports = {
 		return to;
 	},
 	
-	step: function (cb) {
+	step: function (cb) {  // advance the process
 		var E=RAN.E,H=RAN.H,R=RAN.R,I=RAN.I,T=RAN.T;
 		var jump=RAN.jump;
 		var t = RAN.t += RAN.dt, steps = RAN.steps++;
 		var x = RAN.x, y = RAN.y;
 		var jumpcb = RAN.cb.jump || function () {};
 		
-		for (var n=0, N=RAN.N; n<N; n++) {  // scan the ensemble
+		for (var n=0, N=RAN.N; n<N; n++)  // scan the ensemble
 			if ( t >= H[n] )    // holding time exceeded so jump to new state
 				jump( fr = E[n], function (to, h) {  // get new state
 					E[n] = to;
 
 					jumpcb(n,fr,to,h,x); // callback with jump info
-				
+					
 					T[ I[n] ][to] += (t-H[n])+h;  // advance cummulative time-in-state  
 					H[n] = t+h;    // advance next-jump time 
 				});
-		}
 
 		RAN.gamma = RAN.corr();
 		cb(y);
 	},
 		
-	run: function (steps, cb) {	
-		var step = RAN.step;
+	run: function (steps, cb) {	  // run the process for number of steps
+		var 
+			step = RAN.step,
+			stepcb = cb || cb.step || function () {};
 		
-		while (steps--) step(cb || cb.step);
+		while (steps--) step(stepcb);
 
 		if (save = RAN.cb.save) {
-			if (y = RAN.y) save(y,"step obs");
-			if (x = RAN.x) save(x,"jump obs");
+			if (y = RAN.y) save(y,"stepobs");
+			if (x = RAN.x) save(x,"jumpobs");
 		}
 
 		return RAN;
 	},
 	
-	reset: function () {
+	reset: function () {  // reset the process
 		RAN.t = 0;
 		return RAN;
 	},
 	
-	corr: function () {
+	corr: function () {  // statistical correlation function
 		var K = RAN.K, T = RAN.T, sym = RAN.sym, cor = 0;
 
 		for (var fr=0; fr<K; fr++) {
 			for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
-			for (var to=0; to<K; to++) 	{
+			for (var to=0; to<K; to++) 	
 				cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
-				//console.log([sym[fr], sym[to], Tfr[to], Tsum, cor]);
-			}
 		}
 
 		return cor;
 	},
 
-	rates: function () {
+	rates: function () {  // legacy
 		var K = RAN.K, T = RAN.T, jumps = RAN.jumps, sym = RAN.sym, cor=0, Tmax=0,max=Math.max;
 
 		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr],to=0; to<K; to++) 
@@ -160,17 +158,8 @@ var RAN = module.exports = {
 		
 	},
 	
-	config: function (opts, cb) {
+	config: function (opts) {  // configure
 	
-		function matrix(M,N) {
-			var rtn = new Array(M);
-
-			if (N)
-				for (var m=0; m<M; m++) rtn[m] = new Array(N);
-
-			return rtn;
-		}
-
 		if (opts) Copy(opts, RAN);
 
 		var N = RAN.N;
@@ -206,7 +195,7 @@ var RAN = module.exports = {
 		// compute nyquist sampling rate
 
 		var A = RAN.A, K = RAN.K = A.length;
-		var lambda = RAN.lambda = meanValue(A);
+		var lambda = RAN.lambda = avgrate(A);
 		var Tc = RAN.Tc = 2.3 / lambda;
 		var dt = RAN.dt = Tc / RAN.nyquist;
 		
@@ -304,7 +293,7 @@ function expdev(mean) {
 	return -mean * Math.log(Math.random());
 }
 
-function meanValue(A) {
+function avgrate(A) {
 	for (var fr=0,lambda=0,K=A.length; fr<K; fr++)
 		for (var to=0,Afr=A[fr]; to<K; to++)
 			if ( fr != to ) lambda += Afr[to];
@@ -312,6 +301,15 @@ function meanValue(A) {
 	return lambda / (K*K-K);
 }
 	
+function matrix(M,N) {
+	var rtn = new Array(M);
+
+	if (N)
+		for (var m=0; m<M; m++) rtn[m] = new Array(N);
+
+	return rtn;
+}
+
 function test() {
 	var 
 		mvp = {mu: [1,2], sigma: [[.9,.6],[.6,.7]]},
@@ -329,7 +327,7 @@ function test() {
 		y: [],
 		cb: {
 			jump: function (n,fr,to,h,x) {
-				//x.push( mvd.sample() );
+				x.push( mvd.sample() );
 				//console.log(["jump",RAN.jumps,RAN.steps,n,fr,to]);
 				//console.log(RAN.R);
 				//console.log([RAN.steps,n,fr,to,RAN.T]);
@@ -356,3 +354,4 @@ function test() {
 		console.log( [n, RAN.gamma, Math.exp(-n)] );
 	});
 }
+
