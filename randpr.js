@@ -8,15 +8,17 @@ var															// shortcuts
 var RAN = module.exports = {
 	N: 0, 		// ensemble size
 	K: 0, 		// #states
-	E: null,    // [N] current ensemble states [0:K-1]
-	I: null, 	// [N] initial ensemble states [0:K-1]
+	Ut: null,    // [N] current ensemble states [0:K-1] at time t
+	U0: null, 	// [N] initial ensemble states [0:K-1]
 	H: null, 	// [N] ensemble next jump times [s]
 	R: null, 	// [KxK] from-to holding times  [s]
-	T: null, 	// [KxK] from-to jump state times [s]
+	T: null, 	// [KxK] from-to jump MLE state times [s]
 	A: null,	// [KxK] from-to jump rate matrix [jumps/s]
-	W: null, 	// [KxK] from-to state transition probabilities
-	P: null,	// [KxK] from-to cummulative transition pr matrix
-	pi: null, 	// [K] equilibrium probs (default = 1/K)
+	P: null,	// [KxK] from-to cummulative transition probabilities
+	Z: null, 	// [KxK] from-to state probabilities
+	pi: null, 	// [K] initial state probabilities (default = 1/K)
+	piEq: null, 	// [K] equilibrium  state probabilities
+	E: null, 	// [K] count of ensemble in each state [1:N]
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 
 	// two-state markov parameters
@@ -26,6 +28,7 @@ var RAN = module.exports = {
 	q: 0,  // off(not on) state pr 
 
 	// K-state parameters
+	gamma: 1, // ensemble correlation at time t
 	lambda: 0,  // average jump rate [jumps/s]
 	Tc: 0,  // coherence time [s]
 	dt: 0, // sample time [s]
@@ -33,12 +36,16 @@ var RAN = module.exports = {
 	nyquist: 10, // nyquist oversampling rate
 
 	jumpModel: "poisson",
-	steps: 0, // step counter	
-	jumps: 0, // number of jumps
 	reversible: false,
+
+	steps: 0, // number of steps 
+	jumps: 0, // number of jumps
+	samples: 0, // number of elements scanned
+	
 	x: null, // jump observations
 	y: null, // step observations
-
+	w: null, // count observations
+	
 	// external pkgs
 	
 	MVN: require("multivariate-normal").default,
@@ -46,24 +53,24 @@ var RAN = module.exports = {
 	
 	cb: {  // callbacks
 		jump: null,  // on jump
-		step: null, 	// on step
-		save: null		// on run end
+		step: null, // after step
+		save: null	// after run 
 	},
 
 	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
 
-		switch (RAN.jumpModel) {
-			case "poisson": // Poisson jump model already initialized on config
+		switch (RAN.jumpModel) {  // reseed jump rates if model requires
+			case "poisson": // Poisson already seeded
 				break;
 				
-			case "gillispie":  // Gillispie jump model (use at your own risk)
-				Gillispie( fr, P, R );
+			case "gillespie":  // reseed using Gillespie model (use at your own risk)
+				Gillespie( fr, P, R );
 				break;
 		}
 
-		if (K == 2)  // get new state
+		if (K == 2)  // get new state for the 2-state process
 			to = (fr + 1) % 2;
 		
 		else do { 	// get new state
@@ -73,41 +80,38 @@ var RAN = module.exports = {
 
 		RAN.jumps++;
 		cb( to, R[fr][fr] = expdev( R[fr][to] ) );
-		return to;
 	},
 	
 	step: function (cb) {  // advance the process
-		var E=RAN.E,H=RAN.H,R=RAN.R,I=RAN.I,T=RAN.T,Z=RAN.Z;
-		var jump=RAN.jump;
-		var t = RAN.t; // += RAN.dt, steps = RAN.steps++;
-		var x = RAN.x, y = RAN.y;
+		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E;
+		var jump = RAN.jump;
+		var t = RAN.t, x = RAN.x, y = RAN.y;
 		var jumpcb = x ? RAN.cb.jump : function () {};
+		
+		for (var k=0; k<K; k++) E[k] = 0;  // initialize counts
 		
 		for (var n=0, N=RAN.N; n<N; n++)  { // scan the ensemble
 
-			Z[ I[n] ][ E[n] ]++;
-
 			if ( t >= H[n] )    // holding time exceeded so jump to new state
-				var to = jump( fr = E[n], function (to, h) {  // get new state
-					E[n] = to;
+				jump( fr = Ut[n], function (to, h) {  // get new state
+					Ut[n] = to;
 
 					jumpcb(n,fr,to,h,x); // callback with jump info
 					
-					//T[ I[n] ][to] += h;  // advance cummulative time-in-state  
-					//H[n] = h;    // advance next-jump time 
-					//T[ fr ][to] = (t-H[n])+h;  // advance cummulative time-in-state  
-					T[ I[n] ][to] += (t-H[n])+h;  // advance cummulative time-in-state  
+					T[ U0[n] ][to] += (t-H[n])+h;  // advance cummulative time-in-state  
 					H[n] = t + h;    // advance next-jump time 
-					//Z[ I[n] ][to]++;
 				});
-		}							
+
+			var fr = U0[n], to = Ut[n];
+			
+			Z[ fr ][ to ]++;  // count the transition
+			E[ to ]++; // count number at state
+		}
 
 		if (y) cb(y);
 
-		RAN.t += RAN.dt; RAN.steps++;
+		RAN.t += RAN.dt; RAN.steps++; RAN.samples += N;
 		RAN.gamma = RAN.corr();
-
-		//RAN.t += RAN.dt;  RAN.steps++;
 	},
 		
 	run: function (steps, cb) {	  // run the process for number of steps
@@ -116,40 +120,52 @@ var RAN = module.exports = {
 			stepcb = cb || RAN.cb.step || function () {};
 		
 		steps = Math.floor(steps);
-		while ( steps-- ) step(stepcb);
+		while ( steps-- ) {
+			step(stepcb);
+			if (steps == 10) RAN.eqrates();
+		}
 
 		if (save = RAN.cb.save) {
 			if (y = RAN.y) save(y,"stepobs");
 			if (x = RAN.x) save(x,"jumpobs");
 		}
 
+		RAN.eqrates();
+		
 		return RAN;
 	},
 	
+	range: function (min,max) {
+		var ran = new Array(max-min+1);
+		for (var n=min,m=0,M=ran.length; m<=M; m++) ran[m] = n += 1;
+		return ran;
+	},
+	
 	corr: function () {  // statistical correlation function
-		var K = RAN.K, T = RAN.T, sym = RAN.sym, cor = 0, corr0 = RAN.corr0 , Z = RAN.Z;
+		var K = RAN.K, sym = RAN.sym, cor = 0, Z = RAN.Z, zN = RAN.samples, cor0=RAN.cor0;
+//console.log(["cor",RAN.t,RAN.steps,Z,RAN.U0.join(""),RAN.Ut.join("")]);
 
-		var zN = RAN.steps* RAN.N;
-//console.log(["cor",RAN.t,RAN.steps,Z,RAN.I.join(""),RAN.E.join("")]);
+		for (var fr=0; fr<K; fr++) 
+			for (var to=0, Zfr=Z[fr]; to<K; to++) 	
+				cor += sym[fr] * sym[to] * Zfr[to] / zN;
 
-		for (var fr=0; fr<K; fr++) {
-			//for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
-			//for (var to=0; to<K; to++) 	cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
-			for (var to=0, Zfr=Z[fr]; to<K; to++) 	cor += sym[fr] * sym[to] * Zfr[to] / zN;
-		}
-
-		return cor ; // / corr0 ;
+		return cor / cor0;
 	},
 
-	txprs: function () {    // compute state transition probs
-		var K = RAN.K, T = RAN.T, W = RAN.W;
+	eqrates: function () {    // MLE equlibrium state probabilities
+		var K = RAN.K, T = RAN.T, dt = RAN.dt, piEq = RAN.piEq;
 
+		//for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
+		//for (var to=0; to<K; to++) cor += sym[fr] * sym[to] * Tfr[to] / Tsum;
+		
+		for (var fr=0; fr<K; fr++) piEq[fr] = 0;
+		
 		for (var fr=0; fr<K; fr++) {
-			for (var Tfr=T[fr], Wfr=W[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
-			for (var to=0; to<K; to++) 	Wfr[to] = Tfr[to] / Tsum;
+			for (var Tfr=T[fr], Tsum=0, to=0; to<K; to++) Tsum += Tfr[to];
+			for (var to=0; to<K; to++) 	piEq[to] += Tfr[to] / Tsum;
 		}
-
-		return RAN.W;		
+		
+		for (var to=0; to<K; to++) piEq[to] /= K;
 	},
 	
 	config: function (opts) {  // configure
@@ -204,16 +220,6 @@ var RAN = module.exports = {
 			for (var k=0; k<K; k++) sym[k] = k;
 		}
 
-		// default equilib probabilities
-		
-		var pi = RAN.pi;		
-		if ( !pi ) {
-			var pi = RAN.pi = matrix(K);
-			for (var fr=0,pi0=1/K; fr<K; fr++) pi[fr] = pi0;
-		}
-		
-		var p = RAN.p = pi[0], q = RAN.q = 1-p;
-
 		// enforce global balance
 		
 		for (var fr=0; fr<K; fr++) {  
@@ -225,14 +231,22 @@ var RAN = module.exports = {
 
 		// allocate the ensemble
 		
-		var R = RAN.R = matrix(K,K);		
+		var piEq = RAN.piEq = matrix(K);
+		var pi = RAN.pi = matrix(K);
+		var R = RAN.R = matrix(K,K);
 		var P = RAN.P = matrix(K,K);
 		var T = RAN.T = matrix(K,K);
-		var W = RAN.W = matrix(K,K);
-		var E = RAN.E = matrix(N);
-		var H = RAN.H = matrix(N);
-		var I = RAN.I = matrix(N);
 		var Z = RAN.Z = matrix(K,K);
+		var H = RAN.H = matrix(N);
+		var E = RAN.E = matrix(K);
+		var Ut = RAN.Ut = matrix(N);
+		var U0 = RAN.U0 = matrix(N);
+
+		// default state probabilities
+		
+		for (var k=0,pi0=1/K; k<K; k++) piEq[k] = pi[k] = pi0;
+		
+		var p = RAN.p = pi[0], q = RAN.q = 1-p;
 
 		// compute average holding times
 
@@ -242,47 +256,51 @@ var RAN = module.exports = {
 		
 		// seed the ensemble
 
-		for (var fr=0; fr<K; fr++) Poisson( fr, P, A );
-
+		switch (RAN.jumpModel) {
+			case "poisson":
+				for (var fr=0; fr<K; fr++) Poisson( fr, P, A );
+				break;
+				
+			case "gillespie":
+				for (var fr=0; fr<K; fr++) Gillespie( fr, P, R );
+		}
+		
 		var jump = RAN.jump, floor = Math.floor, rand = Math.random;
 
-		RAN.t = RAN.steps = RAN.jumps = 0;
+		RAN.t = RAN.steps = RAN.jumps = RAN.samples = 0;
 		
-		for (var fr=0; fr<K; fr++) for (var Tfr=T[fr], Zfr=Z[fr], to=0; to<K; to++) Zfr[to] = Tfr[to] = 0;
+		for (var fr=0; fr<K; fr++) 
+			for (var Tfr=T[fr], Zfr=Z[fr], to=0; to<K; to++) 
+				Zfr[to] = Tfr[to] = 0;
 		
 		if (K == 2)  // two-state 
 			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
 				if ( n < Np ) {
-					var fr = I[n] = to = E[n] = 1;
+					var fr = U0[n] = Ut[n] = 1;
 					var h = H[n] = R[fr][fr] = expdev(Ton);
 				}
 				else {
-					var fr = I[n] = to = E[n] = 0;
+					var fr = U0[n] = Ut[n] = 0;
 					var h = H[n] = R[fr][fr] = expdev(Toff);
 				}
 				T[fr][fr] += h;
-				//Z[fr][fr] ++;
 			}
 
 		else  // multi-state 
 			for (var n=0; n<N; n++) 
 				jump( fr = floor(rand() * K), function (to,h) {
-					I[n] = fr;
-					E[n] = to;
+					U0[n] = Ut[n] = fr;
 					H[n] = h;	
-					//T[fr][fr] += h;
+					T[fr][fr] += h;
 				});
 
-		// initial symbol-value normalized correlation
+		// symbol variance to normalize correlations
 
-		RAN.corr0 = 0;
-		for (var k=0; k<K; k++) RAN.corr0 += sym[k] * sym[k];
-			
-		//RAN.steps = 0; RAN.t = 0;
+		RAN.cor0 = 0;
+		for (var k=0; k<K; k++) 
+			RAN.cor0 += sym[k] * sym[k] * pi[k];
+		
 		RAN.gamma = 1;
-		//RAN.run(1); RAN.t  = RAN.steps = RAN.jumps = 0;
-
-		RAN.txprs();
 
 		return RAN;
 	}
@@ -318,7 +336,7 @@ function Poisson( fr , P, A) {
 	for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
 }
 
-function Gillispie( fr, P, R ) {
+function Gillespie( fr, P, R ) {
 	var K = P.length;
 	for (var to=0,Pfr=P[fr],Rfr=R[fr],R0=Rfr[fr]; to<K; to++) 
 		Pfr[to] = (to == fr) ? 0 : Rfr[to] / R0;
@@ -333,11 +351,11 @@ function test() {
 		mvd = RAN.MVN(mvp.mu, mvp.sigma);
 
 	RAN.config({
-		N: 10,
+		N: 100,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
-		A: [[0,1],[1,0]], 
+		A: [[0,1],[10,0]], 
 		sym: [-1,1],
 
 		nyquist: 10,
@@ -355,31 +373,36 @@ function test() {
 		cumTxPr: RAN.P,
 		stateTimes: RAN.T,
 		holdTimes: RAN.R,
-		eqPr: RAN.pi,
+		initPr: RAN.pi,
 		Tc: RAN.Tc,
 		p: RAN.p,
 		dt: RAN.dt,
 		Z: RAN.Z,
+		avgRate: RAN.lambda,
 		cor: RAN.gamma
 	});
 
 	var steps = 4 * RAN.Tc/RAN.dt;
-
+	var cumcnt = 0;
+	
 	RAN.run(steps, function (y) {
-		var n = RAN.t / RAN.Tc;
+		var  t = RAN.t, n = t / RAN.Tc, N = RAN.N, 
+			cnt = N-RAN.E[0], lambda = (cumcnt+=cnt)/t , 
+			lambda0 = N/RAN.dt;
+			//lambda0 = (1-RAN.piEq[0])*N/RAN.dt;
+		
+		console.log( [n, RAN.gamma, Math.exp(-n), cnt, lambda / lambda0 ] );
 		// y.push( [n, RAN.gamma, Math.exp(-n)] );
 		//console.log( [n, RAN.T] );
 		//console.log([RAN.steps, RAN.jumps]);
-		//console.log(RAN.txprs());
+		//console.log(RAN.eqrates());
 		//console.log( [n.toFixed(3), RAN.gamma.toFixed(3), Math.exp(-n).toFixed(3) ] );
 		//console.log( [n, RAN.gamma, Math.exp(-n) ] );
-		console.log( [n, RAN.gamma, Math.exp(-n), RAN.steps, RAN.Z ] );
+		//console.log( [n, RAN.gamma, Math.exp(-n), RAN.steps, RAN.Z ] );
 		//console.log([n,RAN.Z,RAN.steps*RAN.N]);
 		//console.log([ n, RAN.corr(), RAN.Z, RAN.steps*RAN.N ]);
 	});
 
 }
 
-//stest();
-
-
+//test();
