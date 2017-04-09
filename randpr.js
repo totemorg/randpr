@@ -33,6 +33,7 @@ var RAN = module.exports = {
 	Tc: 0,  // coherence time [s]
 	dt: 0, // sample time [s]
 	t: 0, // step time [s]
+	s: 0, // normalize step time [0:1]
 	nyquist: 10, // nyquist oversampling rate
 
 	jumpModel: "poisson",
@@ -57,6 +58,8 @@ var RAN = module.exports = {
 		save: null	// after run 
 	},
 
+	oo : null, // ornstein-ohlenbeck {mu,theta,sigma} parms
+	
 	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
@@ -120,9 +123,12 @@ var RAN = module.exports = {
 			stepcb = cb || RAN.cb.step || function () {};
 		
 		steps = Math.floor(steps);
+		var ds = 1/steps;
+		RAN.s = 0;
+		
 		while ( steps-- ) {
 			step(stepcb);
-			if (steps == 10) RAN.eqrates();
+			RAN.s += ds;
 		}
 
 		if (save = RAN.cb.save) {
@@ -252,7 +258,10 @@ var RAN = module.exports = {
 
 		for (var fr=0; fr<K; fr++)   
 			for (var to=0, Afr=A[fr], Rfr=R[fr]; to<K; to++) 
-				Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
+				if ( TC )
+					Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
+				else
+					Rfr[to] = 0;
 		
 		// seed the ensemble
 
