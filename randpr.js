@@ -8,7 +8,8 @@ var															// shortcuts
 var RAN = module.exports = {
 	N: 0, 		// ensemble size
 	K: 0, 		// #states
-	W: 0, 		// wiener process
+	W: null, 		// wiener process
+	Q: null, 		// wiener walks
 	Ut: null,    // [N] current ensemble states [0:K-1] at time t
 	U0: null, 	// [N] initial ensemble states [0:K-1]
 	H: null, 	// [N] ensemble next jump times [s]
@@ -38,7 +39,7 @@ var RAN = module.exports = {
 
 	jumpModel: "poisson",
 	reversible: false,
-	wiener: 0,
+	wiener: 0,  // number of additional random walks at each wiener step
 	
 	steps: 0, // number of steps 
 	jumps: 0, // number of jumps
@@ -114,12 +115,14 @@ var RAN = module.exports = {
 
 		// step wiener process
 		
-		if (n = RAN.wiener) {
-			var floor = Math.floor, sqrt = Math.sqrt, nrv = RAN.NRV.sample, W = RAN.W;
+		if (M = RAN.wiener) {
+			var floor = Math.floor, sqrt = Math.sqrt, nrv = RAN.NRV.sample, W = RAN.W, Q = RAN.Q;
 			
-			var t = RAN.steps,n=100;			
-			for (var sum=0, j=1, J=floor(n*t); j<=J; j++) sum += nrv()[0];
-			RAN.W = sum / sqrt(n+1);
+			for (var t=RAN.steps,n=0; n<N; n++) {				
+				for (var sum=Q[n], j=1, J=floor(M*t); j<=J; j++) sum += nrv()[0];
+				W[n] = sum / sqrt(M);
+				Q[n] = sum;
+			}
 		}
 		
 		// advance process
@@ -259,7 +262,8 @@ var RAN = module.exports = {
 		var E = RAN.E = matrix(K);
 		var Ut = RAN.Ut = matrix(N);
 		var U0 = RAN.U0 = matrix(N);
-		//var W = RAN.W = matrix(N);
+		var W = RAN.W = RAN.wiener ? matrix(N) : null;
+		var Q = RAN.Q = RAN.wiener ? matrix(N) : null;
 
 		// default state probabilities
 		
@@ -326,7 +330,12 @@ var RAN = module.exports = {
 		for (var k=0; k<K; k++) 
 			RAN.cor0 += sym[k] * sym[k] * pi[k];
 		
-		RAN.NRV = RAN.MVN( [0], [[1]] );
+		//  initialilze wiener processes
+
+		if (RAN.wiener) {
+			RAN.NRV = RAN.MVN( [0], [[1]] );
+			for (var n=0; n<N; n++) W[n] = Q[n] = 0;
+		}
 
 		return RAN;
 	}
@@ -378,7 +387,7 @@ function test() {
 
 	RAN.config({
 		N: 10,
-		wiener: 100,
+		wiener: 10,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
@@ -400,15 +409,15 @@ function test() {
 		cumTxPr: RAN.P,
 		stateTimes: RAN.T,
 		holdTimes: RAN.R,
-		initPr: RAN.pi,
-		Tc: RAN.Tc,
-		p: RAN.p,
-		dt: RAN.dt,
-		Z: RAN.Z,
+		initialStatePr: RAN.pi,
+		coherenceTime: RAN.Tc,
+		initialActivity: RAN.p,
+		sampleTime: RAN.dt,
+		timeInState: RAN.Z,
 		avgRate: RAN.lambda
 	});
 
-	var steps = 4 * RAN.Tc/RAN.dt;
+	var steps = 4; //4 * RAN.Tc/RAN.dt;
 	var cumcnt = 0;
 	
 	RAN.run(steps, function (y) {
