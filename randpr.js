@@ -409,7 +409,7 @@ function test() {
 		cumTxPr: RAN.P,
 		stateTimes: RAN.T,
 		holdTimes: RAN.R,
-		initialStatePr: RAN.pi,
+		initialPr: RAN.pi,
 		coherenceTime: RAN.Tc,
 		initialActivity: RAN.p,
 		sampleTime: RAN.dt,
@@ -441,4 +441,4 @@ function test() {
 
 }
 
-// test();
+ test();
