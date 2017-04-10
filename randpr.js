@@ -8,6 +8,7 @@ var															// shortcuts
 var RAN = module.exports = {
 	N: 0, 		// ensemble size
 	K: 0, 		// #states
+	W: 0, 		// wiener process
 	Ut: null,    // [N] current ensemble states [0:K-1] at time t
 	U0: null, 	// [N] initial ensemble states [0:K-1]
 	H: null, 	// [N] ensemble next jump times [s]
@@ -28,7 +29,6 @@ var RAN = module.exports = {
 	q: 0,  // off(not on) state pr 
 
 	// K-state parameters
-	gamma: 1, // ensemble correlation at time t
 	lambda: 0,  // average jump rate [jumps/s]
 	Tc: 0,  // coherence time [s]
 	dt: 0, // sample time [s]
@@ -38,7 +38,8 @@ var RAN = module.exports = {
 
 	jumpModel: "poisson",
 	reversible: false,
-
+	wiener: 0,
+	
 	steps: 0, // number of steps 
 	jumps: 0, // number of jumps
 	samples: 0, // number of elements scanned
@@ -51,7 +52,7 @@ var RAN = module.exports = {
 	
 	MVN: require("multivariate-normal").default,
 	MLE: require("expectation-maximization"),
-	
+
 	cb: {  // callbacks
 		jump: null,  // on jump
 		step: null, // after step
@@ -88,12 +89,12 @@ var RAN = module.exports = {
 	step: function (cb) {  // advance the process
 		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E;
 		var jump = RAN.jump;
-		var t = RAN.t, x = RAN.x, y = RAN.y;
+		var t = RAN.t, x = RAN.x, y = RAN.y, N=RAN.N;
 		var jumpcb = x ? RAN.cb.jump : function () {};
 		
 		for (var k=0; k<K; k++) E[k] = 0;  // initialize counts
 		
-		for (var n=0, N=RAN.N; n<N; n++)  { // scan the ensemble
+		for (var n=0; n<N; n++)  { // scan the ensemble
 
 			if ( t >= H[n] )    // holding time exceeded so jump to new state
 				jump( fr = Ut[n], function (to, h) {  // get new state
@@ -111,10 +112,21 @@ var RAN = module.exports = {
 			E[ to ]++; // count number at state
 		}
 
-		if (y) cb(y);
-
+		// step wiener process
+		
+		if (n = RAN.wiener) {
+			var floor = Math.floor, sqrt = Math.sqrt, nrv = RAN.NRV.sample, W = RAN.W;
+			
+			var t = RAN.steps,n=100;			
+			for (var sum=0, j=1, J=floor(n*t); j<=J; j++) sum += nrv()[0];
+			RAN.W = sum / sqrt(n+1);
+		}
+		
+		// advance process
+											 
 		RAN.t += RAN.dt; RAN.steps++; RAN.samples += N;
-		RAN.gamma = RAN.corr();
+		
+		if (y) cb(y);
 	},
 		
 	run: function (steps, cb) {	  // run the process for number of steps
@@ -208,7 +220,7 @@ var RAN = module.exports = {
 		else
 			console.log("Houston we have a problem");
 		
-		// compute nyquist sampling rate
+		// compute sampling rate and coherence time
 
 		var A = RAN.A, K = RAN.K = A.length;
 		var lambda = RAN.lambda = avgrate(A);
@@ -247,6 +259,7 @@ var RAN = module.exports = {
 		var E = RAN.E = matrix(K);
 		var Ut = RAN.Ut = matrix(N);
 		var U0 = RAN.U0 = matrix(N);
+		//var W = RAN.W = matrix(N);
 
 		// default state probabilities
 		
@@ -258,7 +271,7 @@ var RAN = module.exports = {
 
 		for (var fr=0; fr<K; fr++)   
 			for (var to=0, Afr=A[fr], Rfr=R[fr]; to<K; to++) 
-				if ( TC )
+				if ( Tc )
 					Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
 				else
 					Rfr[to] = 0;
@@ -278,9 +291,13 @@ var RAN = module.exports = {
 
 		RAN.t = RAN.steps = RAN.jumps = RAN.samples = 0;
 		
+		// intialize state counters
+		
 		for (var fr=0; fr<K; fr++) 
 			for (var Tfr=T[fr], Zfr=Z[fr], to=0; to<K; to++) 
 				Zfr[to] = Tfr[to] = 0;
+		
+		// initalize the ensemble
 		
 		if (K == 2)  // two-state 
 			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
@@ -309,7 +326,7 @@ var RAN = module.exports = {
 		for (var k=0; k<K; k++) 
 			RAN.cor0 += sym[k] * sym[k] * pi[k];
 		
-		RAN.gamma = 1;
+		RAN.NRV = RAN.MVN( [0], [[1]] );
 
 		return RAN;
 	}
@@ -360,11 +377,12 @@ function test() {
 		mvd = RAN.MVN(mvp.mu, mvp.sigma);
 
 	RAN.config({
-		N: 100,
+		N: 10,
+		wiener: 100,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
-		A: [[0,1],[10,0]], 
+		A: [[0,1], [10,0]], 
 		sym: [-1,1],
 
 		nyquist: 10,
@@ -387,8 +405,7 @@ function test() {
 		p: RAN.p,
 		dt: RAN.dt,
 		Z: RAN.Z,
-		avgRate: RAN.lambda,
-		cor: RAN.gamma
+		avgRate: RAN.lambda
 	});
 
 	var steps = 4 * RAN.Tc/RAN.dt;
@@ -400,7 +417,8 @@ function test() {
 			lambda0 = N/RAN.dt;
 			//lambda0 = (1-RAN.piEq[0])*N/RAN.dt;
 		
-		console.log( [n, RAN.gamma, Math.exp(-n), cnt, lambda / lambda0 ] );
+		console.log( [n, RAN.corr(), Math.exp(-n), cnt, lambda / lambda0, RAN.W ] );
+		//console.log( RAN.W );
 		// y.push( [n, RAN.gamma, Math.exp(-n)] );
 		//console.log( [n, RAN.T] );
 		//console.log([RAN.steps, RAN.jumps]);
@@ -414,4 +432,4 @@ function test() {
 
 }
 
-//test();
+// test();
