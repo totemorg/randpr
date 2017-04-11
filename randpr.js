@@ -146,10 +146,20 @@ var RAN = module.exports = {
 			RAN.s += ds;
 		}
 
-		if (save = RAN.cb.save) {
-			if (y = RAN.y) save(y,"stepobs");
-			if (x = RAN.x) save(x,"jumpobs");
-		}
+		if (save = RAN.cb.save) save({steps: RAN.y,jumps: RAN.x,info: {
+			jumpRates: RAN.A,
+			cumTxPr: RAN.P,
+			jumpCounts: RAN.T,
+			holdTimes: RAN.R,
+			ensembleSize: RAN.N,
+			simIntervals: test.Steps,
+			initPr: RAN.pi,
+			Tc: RAN.Tc,
+			p: RAN.p,
+			dt: RAN.dt,
+			avgLoad: RAN.lambda,
+			symbols: RAN.sym
+		}});
 
 		RAN.eqrates();
 		
@@ -262,8 +272,8 @@ var RAN = module.exports = {
 		var E = RAN.E = matrix(K);
 		var Ut = RAN.Ut = matrix(N);
 		var U0 = RAN.U0 = matrix(N);
-		var W = RAN.W = RAN.wiener ? matrix(N) : null;
-		var Q = RAN.Q = RAN.wiener ? matrix(N) : null;
+		var W = RAN.W = RAN.wiener ? matrix(N) : [];
+		var Q = RAN.Q = RAN.wiener ? matrix(N) : [];
 
 		// default state probabilities
 		
@@ -412,6 +422,7 @@ function test() {
 		initialPr: RAN.pi,
 		coherenceTime: RAN.Tc,
 		initialActivity: RAN.p,
+		wienerWalks: RAN.wiener,
 		sampleTime: RAN.dt,
 		timeInState: RAN.Z,
 		avgRate: RAN.lambda
@@ -441,4 +452,4 @@ function test() {
 
 }
 
- test();
+// test();
