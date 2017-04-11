@@ -133,6 +133,13 @@ var RAN = module.exports = {
 	},
 		
 	run: function (steps, cb) {	  // run the process for number of steps
+
+		function poisson(m,a) {
+			// a^m e(-a) / m!
+			for (var sum=0,k=m; k; k--) sum += log(k);
+			return exp( m*log(a) - a - sum );	
+		}
+
 		var 
 			step = RAN.step,
 			stepcb = cb || RAN.cb.step || function () {};
@@ -146,23 +153,47 @@ var RAN = module.exports = {
 			RAN.s += ds;
 		}
 
-		if (save = RAN.cb.save) save({steps: RAN.y,jumps: RAN.x,info: {
-			jumpRates: RAN.A,
-			cumTxPr: RAN.P,
-			jumpCounts: RAN.T,
-			holdTimes: RAN.R,
-			ensembleSize: RAN.N,
-			simIntervals: test.Steps,
-			initPr: RAN.pi,
-			Tc: RAN.Tc,
-			p: RAN.p,
-			dt: RAN.dt,
-			avgLoad: RAN.lambda,
-			symbols: RAN.sym
-		}});
-
 		RAN.eqrates();
 		
+		if (save = RAN.cb.save)  {
+
+			var
+				rtn = {
+					steps: RAN.y,
+					jumps: RAN.x,
+					info: {
+						jumpRates: RAN.A,
+						cumTxPr: RAN.P,
+						jumpCounts: RAN.T,
+						holdTimes: RAN.R,
+						ensembleSize: RAN.N,
+						simIntervals: test.Steps,
+						initPr: RAN.pi,
+						Tc: RAN.Tc,
+						p: RAN.p,
+						dt: RAN.dt,
+						avgLoad: RAN.lambda,
+						symbols: RAN.sym
+				}};
+
+			var
+					p = 1 - RAN.piEq[0],  // equilb activity
+					N = RAN.N,
+					avgcount = N*p,
+					stats = rtn.stats = [],
+					steps = RAN.steps,
+					lambda0 = avgcount / RAN.dt;
+
+console.log([N,p,avgcount,RAN.piEq]);
+
+				for (var bin=0,count=1, bins=hist.length; bin<bins; bin++, count+=dcount) {
+					var ncount = floor(count);
+					stats.push( [ncount, hist[bin]/steps, poisson(ncount,avgcount) ] );
+				}
+console.log(stats);
+
+		save(rtn);
+
 		return RAN;
 	},
 	
@@ -396,8 +427,8 @@ function test() {
 		mvd = RAN.MVN(mvp.mu, mvp.sigma);
 
 	RAN.config({
-		N: 10,
-		wiener: 10,
+		N: 100,
+		wiener: 0,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
