@@ -20,9 +20,13 @@ var RAN = module.exports = {
 	Z: null, 	// [KxK] from-to state probabilities
 	pi: null, 	// [K] initial state probabilities (default = 1/K)
 	piEq: null, 	// [K] equilibrium  state probabilities
-	E: null, 	// [K] count of ensemble in each state [1:N]
+	E: null, 	// [K] count of ensemble in state [1:N]
+	W: null, 	// [K] cummulative counts in state
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 
+	// count bins
+	bins: 0,
+	
 	// two-state markov parameters
 	alpha: 0,  // on-to-off rate [jumps/s]
 	beta: 0,  // off-to-on rate [jumps/s]
@@ -88,12 +92,14 @@ var RAN = module.exports = {
 	},
 	
 	step: function (cb) {  // advance the process
-		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E;
+		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E,G=RAN.G;
 		var jump = RAN.jump;
 		var t = RAN.t, x = RAN.x, y = RAN.y, N=RAN.N;
 		var jumpcb = x ? RAN.cb.jump : function () {};
 		
-		for (var k=0; k<K; k++) E[k] = 0;  // initialize counts
+		// initialize counts in state
+		
+		for (var k=0; k<K; k++) E[k] = 0;  
 		
 		for (var n=0; n<N; n++)  { // scan the ensemble
 
@@ -110,7 +116,7 @@ var RAN = module.exports = {
 			var fr = U0[n], to = Ut[n];
 			
 			Z[ fr ][ to ]++;  // count the transition
-			E[ to ]++; // count number at state
+			E[ to ]++; // count number in state
 		}
 
 		// step wiener process
@@ -125,6 +131,12 @@ var RAN = module.exports = {
 			}
 		}
 		
+		// update cummulative counts
+		
+		for (var k=0; k<K; k++) G[k] += E[k];  
+		
+		RAN.activity.add( N - E[0] );
+		
 		// advance process
 											 
 		RAN.t += RAN.dt; RAN.steps++; RAN.samples += N;
@@ -133,6 +145,7 @@ var RAN = module.exports = {
 	},
 		
 	run: function (steps, cb) {	  // run the process for number of steps
+		var exp = Math.exp, log = Math.log;			
 
 		function poisson(m,a) {
 			// a^m e(-a) / m!
@@ -154,45 +167,43 @@ var RAN = module.exports = {
 		}
 
 		RAN.eqrates();
-		
-		if (save = RAN.cb.save)  {
 
-			var
-				rtn = {
-					steps: RAN.y,
-					jumps: RAN.x,
-					info: {
-						jumpRates: RAN.A,
-						cumTxPr: RAN.P,
-						jumpCounts: RAN.T,
-						holdTimes: RAN.R,
-						ensembleSize: RAN.N,
-						simIntervals: test.Steps,
-						initPr: RAN.pi,
-						Tc: RAN.Tc,
-						p: RAN.p,
-						dt: RAN.dt,
-						avgLoad: RAN.lambda,
-						symbols: RAN.sym
-				}};
+		var				
+			avgcount = RAN.N * (1 - RAN.piEq[0]),
+			stats = [],
+			act = RAN.activity;
 
-			var
-					p = 1 - RAN.piEq[0],  // equilb activity
-					N = RAN.N,
-					avgcount = N*p,
-					stats = rtn.stats = [],
-					steps = RAN.steps,
-					lambda0 = avgcount / RAN.dt;
+		act.norm();
 
-console.log([N,p,avgcount,RAN.piEq]);
+console.log(["eq",RAN.piEq,avgcount]);
 
-				for (var bin=0,count=1, bins=hist.length; bin<bins; bin++, count+=dcount) {
-					var ncount = floor(count);
-					stats.push( [ncount, hist[bin]/steps, poisson(ncount,avgcount) ] );
-				}
+		for (var bin=0, bins=act.bins; bin<bins; bin++) {
+			var count = act.count[bin];
+			stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
+		}
+				
 console.log(stats);
-
-		save(rtn);
+		
+		if (save = RAN.cb.save)   // save metrics
+			save({
+				steps: RAN.y,
+				jumps: RAN.x,
+				stats: stats,
+				info: {
+					jumpRates: RAN.A,
+					cumTxPr: RAN.P,
+					jumpCounts: RAN.T,
+					holdTimes: RAN.R,
+					ensembleSize: RAN.N,
+					simIntervals: test.Steps,
+					initPr: RAN.pi,
+					Tc: RAN.Tc,
+					p: RAN.p,
+					dt: RAN.dt,
+					avgLoad: RAN.lambda,
+					symbols: RAN.sym
+				}
+			});
 
 		return RAN;
 	},
@@ -305,6 +316,7 @@ console.log(stats);
 		var U0 = RAN.U0 = matrix(N);
 		var W = RAN.W = RAN.wiener ? matrix(N) : [];
 		var Q = RAN.Q = RAN.wiener ? matrix(N) : [];
+		var G = RAN.G = matrix(K);
 
 		// default state probabilities
 		
@@ -378,9 +390,42 @@ console.log(stats);
 			for (var n=0; n<N; n++) W[n] = Q[n] = 0;
 		}
 
+		// clear cummulative counts in state
+		
+		for (var k=0; k<K; k++) G[k] = 0;  		
+		
+		// initialize ensemble counting stats
+		
+		RAN.activity = new STATS(RAN.bins,N);
+		
 		return RAN;
 	}
 };
+
+function STATS(bins,N) {
+	this.bins= bins;
+	this.dbins= (bins-1) / N;
+	this.dcounts= (N-1) / (bins-1);
+	this.samples= 0;
+	
+	var 
+		hist = this.hist = matrix(bins),
+		count = this.count = matrix(bins);
+
+	for (var cnt=1,bin=0; bin<bins; bin++, cnt+=this.dcounts) {
+		hist[bin] = 0;
+		count[bin] = Math.round(cnt);
+	}
+}	
+	
+STATS.prototype.add = function (val) {
+	this.hist[ Math.floor( val * this.dbins ) ]++;
+	this.samples++;
+}
+
+STATS.prototype.norm = function () {
+	for (var bin=0, hist=this.hist, bins=this.bins; bin<bins; bin++) hist[bin] /= this.samples * this.dcounts;
+}
 
 function expdev(mean) {
 	return -mean * Math.log(Math.random());
@@ -429,10 +474,11 @@ function test() {
 	RAN.config({
 		N: 100,
 		wiener: 0,
+		bins: 50,
 		//A: [[0,1,2],[3,0,4],[5,6,0]],
 		//sym: [-1,0,1],
 
-		A: [[0,1], [10,0]], 
+		A: [[0,1], [1,0]], 
 		sym: [-1,1],
 
 		nyquist: 10,
@@ -459,16 +505,15 @@ function test() {
 		avgRate: RAN.lambda
 	});
 
-	var steps = 4; //4 * RAN.Tc/RAN.dt;
-	var cumcnt = 0;
+	var steps = 400 * RAN.Tc/RAN.dt;
 	
 	RAN.run(steps, function (y) {
-		var  t = RAN.t, n = t / RAN.Tc, N = RAN.N, 
-			cnt = N-RAN.E[0], lambda = (cumcnt+=cnt)/t , 
-			lambda0 = N/RAN.dt;
+		var  t = RAN.t, n = t / RAN.Tc, N = RAN.N;
+			//cnt = N-RAN.E[0], lambda = (cumcnt+=cnt)/t , 
+			//lambda0 = N/RAN.dt;
 			//lambda0 = (1-RAN.piEq[0])*N/RAN.dt;
 		
-		console.log( [n, RAN.corr(), Math.exp(-n), cnt, lambda / lambda0, RAN.W ] );
+		console.log( [n, RAN.corr(), Math.exp(-n), RAN.E[0], RAN.W ] );
 		//console.log( RAN.W );
 		// y.push( [n, RAN.gamma, Math.exp(-n)] );
 		//console.log( [n, RAN.T] );
@@ -483,4 +528,4 @@ function test() {
 
 }
 
-// test();
+ test();
