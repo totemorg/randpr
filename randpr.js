@@ -8,8 +8,8 @@ var															// shortcuts
 var RAN = module.exports = {
 	N: 0, 		// ensemble size
 	K: 0, 		// #states
-	W: null, 		// wiener process
-	Q: null, 		// wiener walks
+	W: null, 		// wiener ensemble
+	Q: null, 		// wiener cummulative walk ensemble
 	Ut: null,    // [N] current ensemble states [0:K-1] at time t
 	U0: null, 	// [N] initial ensemble states [0:K-1]
 	H: null, 	// [N] ensemble next jump times [s]
@@ -21,7 +21,6 @@ var RAN = module.exports = {
 	pi: null, 	// [K] initial state probabilities (default = 1/K)
 	piEq: null, 	// [K] equilibrium  state probabilities
 	E: null, 	// [K] count of ensemble in state [1:N]
-	W: null, 	// [K] cummulative counts in state
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 
 	// count bins
@@ -58,14 +57,11 @@ var RAN = module.exports = {
 	MVN: require("multivariate-normal").default,
 	MLE: require("expectation-maximization"),
 
-	cb: {  // callbacks
-		jump: null,  // on jump
-		step: null, // after step
-		save: null	// after run 
+	on: {  // callbacks
+		jump: function () {},  // on jump
+		step: function () {} // on step
 	},
 
-	oo : null, // ornstein-ohlenbeck {mu,theta,sigma} parms
-	
 	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
@@ -95,7 +91,7 @@ var RAN = module.exports = {
 		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E,G=RAN.G;
 		var jump = RAN.jump;
 		var t = RAN.t, x = RAN.x, y = RAN.y, N=RAN.N;
-		var jumpcb = x ? RAN.cb.jump : function () {};
+		var onjump = RAN.on.jump;
 		
 		// initialize counts in state
 		
@@ -107,7 +103,7 @@ var RAN = module.exports = {
 				jump( fr = Ut[n], function (to, h) {  // get new state
 					Ut[n] = to;
 
-					jumpcb(n,fr,to,h,x); // callback with jump info
+					onjump(n,fr,to,h,x); // callback with jump info
 					
 					T[ U0[n] ][to] += (t-H[n])+h;  // advance cummulative time-in-state  
 					H[n] = t + h;    // advance next-jump time 
@@ -153,58 +149,36 @@ var RAN = module.exports = {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		var 
-			step = RAN.step,
-			stepcb = cb || RAN.cb.step || function () {};
+		var step = RAN.step,onstep = RAN.on.step;
 		
 		steps = Math.floor(steps);
 		var ds = 1/steps;
 		RAN.s = 0;
 		
 		while ( steps-- ) {
-			step(stepcb);
+			step(onstep);
 			RAN.s += ds;
 		}
 
 		RAN.eqrates();
 
-		var				
+		var	
 			avgcount = RAN.N * (1 - RAN.piEq[0]),
 			stats = [],
 			act = RAN.activity;
 
 		act.norm();
 
-console.log(["eq",RAN.piEq,avgcount]);
+//console.log(["eq",RAN.piEq,avgcount]);
 
 		for (var bin=0, bins=act.bins; bin<bins; bin++) {
 			var count = act.count[bin];
 			stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
 		}
 				
-console.log(stats);
+//console.log(stats);
+		if (cb) cb(RAN.x, RAN.y, stats);
 		
-		if (save = RAN.cb.save)   // save metrics
-			save({
-				steps: RAN.y,
-				jumps: RAN.x,
-				stats: stats,
-				info: {
-					jumpRates: RAN.A,
-					cumTxPr: RAN.P,
-					jumpCounts: RAN.T,
-					holdTimes: RAN.R,
-					ensembleSize: RAN.N,
-					simIntervals: test.Steps,
-					initPr: RAN.pi,
-					Tc: RAN.Tc,
-					p: RAN.p,
-					dt: RAN.dt,
-					avgLoad: RAN.lambda,
-					symbols: RAN.sym
-				}
-			});
-
 		return RAN;
 	},
 	
