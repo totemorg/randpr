@@ -7,7 +7,7 @@ var															// shortcuts
 
 var RAN = module.exports = {
 	N: 0, 		// ensemble size
-	K: 0, 		// #states
+	K: 0, 		// #states >= 2
 	W: null, 		// wiener ensemble
 	Q: null, 		// wiener cummulative walk ensemble
 	Ut: null,    // [N] current ensemble states [0:K-1] at time t
@@ -34,7 +34,7 @@ var RAN = module.exports = {
 
 	// K-state parameters
 	lambda: 0,  // average jump rate [jumps/s]
-	Tc: 0,  // coherence time [s]
+	Tc: 0,  // coherence time >0 [s] 
 	dt: 0, // sample time [s]
 	t: 0, // step time [s]
 	s: 0, // normalize step time [0:1]
