@@ -6,7 +6,25 @@ var															// shortcuts
 	Each = ENUM.each;
 
 var RAN = module.exports = {
+	// configuration
 	N: 0, 		// ensemble size
+	A: null,	// [KxK] from-to jump rate matrix [jumps/s] or {Tc,p} or {alpha,beta} 2-state or {K} random K-state
+	sym: null, 	// [K] state symbols (default = 0:K-1)
+	nyquist: 10, // nyquist oversampling rate
+	wiener: 0,  // number of additional random walks at each wiener step
+	reversible: false,  // tailor A to make process reversible	
+	x: null, // jump observations
+	y: null, // step observations
+	bins: 0,  // number of bins for histogram stats
+	on: {  // callbacks
+		jump: function () {},  // on jump
+		step: function () {} // on step
+	},
+
+	// configuration generally not used
+	jumpModel: "poisson", 
+	
+	// output
 	K: 0, 		// #states >= 2
 	W: null, 		// wiener ensemble
 	Q: null, 		// wiener cummulative walk ensemble
@@ -15,52 +33,34 @@ var RAN = module.exports = {
 	H: null, 	// [N] ensemble next jump times [s]
 	R: null, 	// [KxK] from-to holding times  [s]
 	T: null, 	// [KxK] from-to jump MLE state times [s]
-	A: null,	// [KxK] from-to jump rate matrix [jumps/s]
 	P: null,	// [KxK] from-to cummulative transition probabilities
 	Z: null, 	// [KxK] from-to state probabilities
 	pi: null, 	// [K] initial state probabilities (default = 1/K)
 	piEq: null, 	// [K] equilibrium  state probabilities
 	E: null, 	// [K] count of ensemble in state [1:N]
-	sym: null, 	// [K] state symbols (default = 0:K-1)
 
-	// count bins
-	bins: 0,
-	
 	// two-state markov parameters
 	alpha: 0,  // on-to-off rate [jumps/s]
 	beta: 0,  // off-to-on rate [jumps/s]
 	p: 0,  // on state pr 
 	q: 0,  // off(not on) state pr 
-
+	
 	// K-state parameters
+
 	lambda: 0,  // average jump rate [jumps/s]
 	Tc: 0,  // coherence time >0 [s] 
 	dt: 0, // sample time [s]
 	t: 0, // step time [s]
 	s: 0, // normalize step time [0:1]
-	nyquist: 10, // nyquist oversampling rate
 
-	jumpModel: "poisson",
-	reversible: false,
-	wiener: 0,  // number of additional random walks at each wiener step
-	
 	steps: 0, // number of steps 
 	jumps: 0, // number of jumps
 	samples: 0, // number of elements scanned
-	
-	x: null, // jump observations
-	y: null, // step observations
-	w: null, // count observations
 	
 	// external pkgs
 	
 	MVN: require("multivariate-normal").default,
 	MLE: require("expectation-maximization"),
-
-	on: {  // callbacks
-		jump: function () {},  // on jump
-		step: function () {} // on step
-	},
 
 	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
 		
@@ -219,39 +219,45 @@ var RAN = module.exports = {
 	
 		if (opts) Copy(opts, RAN);
 
-		var N = RAN.N;
+		var N = RAN.N, A = RAN.A;
 
-		if (RAN.A) { // K-state markov
-		}
-		else
-		if (RAN.p || RAN.Tc) {  // two-state markov process via p,Tc parms
-			var
-					p = RAN.p, 
-					Tc = RAN.Tc, 
-					q = RAN.q = 1 - p,
-					alpha = RAN.alpha = 2.3 * q / Tc, 
-					beta = RAN.beta = 2.3 * p / Tc;
-
-			RAN.A = [[-alpha, alpha], [beta, -beta]];
-			RAN.pi = [p, q];
-		}
-		else
-		if (RAN.alpha || RAN.beta) { // two-state markov process via alpha,beta parms
-			var 
-				alpha = RAN.alpha, 
-				beta = RAN.beta, 
-				p = RAN.p = alpha / (alpha + beta), 
-				q = RAN.q = 1 - p;
-
-			RAN.A = [[-alpha, alpha], [beta, -beta]];
-			RAN.pi = [p, q];	
-		}
-		else
-			console.log("Houston we have a problem");
+		if (A.constructor == Object) 
+			if (A.alpha)  { // two-state markov process via alpha,beta parms
+				var 
+					alpha = RAN.alpha = A.alpha, 
+					beta = RAN.beta = A.beta, 
+					p = alpha / (alpha + beta), 
+					q = 1 - p,
+					A = RAN.A = [[-alpha, alpha], [beta, -beta]],
+					pi = RAN.pi = [p, q];	
+			}
 		
+			else
+			if (A.p)  { // two-state markov process via p,Tc parms
+				var
+					p = A.p, 
+					Tc = A.Tc, 
+					q = 1 - p,
+					alpha = RAN.alpha = 2.3 * q / Tc, 
+					beta = RAN.beta = 2.3 * p / Tc,
+					A = RAN.A = [[-alpha, alpha], [beta, -beta]],
+					pi = RAN.pi = [p, q];
+			}
+		
+			else
+			if (K = A.K) { // K-state via random rate generator
+				var A = RAN.A = matrix(K,K), rand = Math.random, floor = Math.floor;
+				for (var fr=0; fr<K; fr++) 
+					for (var to=0; to<K; to++) 
+						A[fr][to] = floor(rand()*10)+1;
+			}
+				
+			else
+				console.log("Houston we have a problem");
+				
 		// compute sampling rate and coherence time
 
-		var A = RAN.A, K = RAN.K = A.length;
+		var K = RAN.K = A.length;
 		var lambda = RAN.lambda = avgrate(A);
 		var Tc = RAN.Tc = 2.3 / lambda;
 		var dt = RAN.dt = Tc / (K*K-K) / RAN.nyquist;
