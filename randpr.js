@@ -269,7 +269,7 @@ var RAN = module.exports = {
 	
 		var sym = RAN.sym;
 		if ( !sym ) {
-			var sym = matrix(K);
+			var sym = RAN.sym = matrix(K);
 			for (var k=0; k<K; k++) sym[k] = k;
 		}
 
