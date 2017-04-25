@@ -270,7 +270,21 @@ var RAN = module.exports = {
 		var sym = RAN.sym;
 		if ( !sym ) {
 			var sym = RAN.sym = matrix(K);
-			for (var k=0; k<K; k++) sym[k] = k;
+
+			if (K % 2) {
+				sym[0]=0;
+				for (var a=1, k=1; k<K; a++) {
+					sym[k++] = a; 
+					sym[k++] = -a;
+				}
+			}
+			else			
+				for (var a=1, k=0; k<K; a++) {
+					sym[k++] = a; 
+					sym[k++] = -a;
+				}
+			
+			console.log(["sym",sym]);
 		}
 
 		// enforce global balance
