@@ -5,6 +5,16 @@ var															// shortcuts
 	Copy = ENUM.copy,
 	Each = ENUM.each;
 
+						// x = "INSERT INTO events SET Location=ST_GeomFromText(POINT(? ?)),?"
+						if (x.constructor == String)
+							var q = sql.query(x, [ xt[0], xt[1], {
+									Height: 0,
+							}], function (err) {
+								console.log([q.sql,err]);
+							});
+						
+						else								
+
 var RAN = module.exports = {
 	// configuration
 	N: 0, 		// ensemble size
@@ -17,8 +27,9 @@ var RAN = module.exports = {
 	y: null, // step observations
 	bins: 0,  // number of bins for histogram stats
 	on: {  // callbacks
-		jump: function () {},  // on jump
-		step: function () {} // on step
+		jump: function (x) {},  // on state jump
+		step: function (y) {}, // on time step
+		sweep: function (u) {} // on ensemble sweep
 	},
 
 	// configuration generally not used
@@ -78,13 +89,14 @@ var RAN = module.exports = {
 		if (K == 2)  // get new state for the 2-state process
 			to = (fr + 1) % 2;
 		
-		else do { 	// get new state
+		else do { 	// get new state by taking a random jump according to cummulative P[fr,to]
 			for (var Pfr = P[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
 		}
+		
 		while (fr == to);
 
-		RAN.jumps++;
-		cb( to, R[fr][fr] = expdev( R[fr][to] ) );
+		RAN.jumps++;  // increase no of jumps taken
+		cb( to, R[fr][fr] = expdev( R[fr][to] ) );  // draw and store new exptime
 	},
 	
 	step: function (cb) {  // advance the process
