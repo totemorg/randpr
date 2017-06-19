@@ -5,43 +5,45 @@ var															// shortcuts
 	Copy = ENUM.copy,
 	Each = ENUM.each;
 
-						// x = "INSERT INTO events SET Location=ST_GeomFromText(POINT(? ?)),?"
-						if (x.constructor == String)
-							var q = sql.query(x, [ xt[0], xt[1], {
-									Height: 0,
-							}], function (err) {
-								console.log([q.sql,err]);
-							});
-						
-						else								
-
 var RAN = module.exports = {
 	// configuration
+
 	N: 0, 		// ensemble size
-	A: null,	// [KxK] from-to jump rate matrix [jumps/s] or {Tc,p} or {alpha,beta} 2-state or {K} random K-state
+	A: null,	// process parameters
+		// [KxK] generate K-state process with jump rate matrix [from, to]
+		// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
+		// {alpha,beta} generate K=2 state process with prescribed rates
+		// {n} generate K-state process with n=K^2-K random rates
+		// {dt,n,agent,fetch,scan} estimate jump rates of real-time process at prescribed sampling time dt[s] having n-rates
+	
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 	nyquist: 10, // nyquist oversampling rate
 	wiener: 0,  // number of additional random walks at each wiener step
 	reversible: false,  // tailor A to make process reversible	
-	x: null, // jump observations
-	y: null, // step observations
+	store: { // stores for ...
+		jump: null, // state jump observations
+		step: null, // time step observations
+		sweep: null  // ensemble sweep observations
+	},
 	bins: 0,  // number of bins for histogram stats
-	on: {  // callbacks
+	jumpModel: "poisson",   // typically not used
+	on: {  // event callbacks for ...
 		jump: function (x) {},  // on state jump
 		step: function (y) {}, // on time step
 		sweep: function (u) {} // on ensemble sweep
 	},
 
-	// configuration generally not used
-	jumpModel: "poisson", 
-	
 	// output
-	K: 0, 		// #states >= 2
+
+	// wiener process
 	W: null, 		// wiener ensemble
 	Q: null, 		// wiener cummulative walk ensemble
-	Ut: null,    // [N] current ensemble states [0:K-1] at time t
+	
+	// markov process
+	K: 0, 		// #states >= 1 inferred from supplied A rates
+	U: null,    // [N] current ensemble states [0:K-1] at time t
 	U0: null, 	// [N] initial ensemble states [0:K-1]
-	H: null, 	// [N] ensemble next jump times [s]
+	H: null, 	// [N] ensemble next jump timesig[s]
 	R: null, 	// [KxK] from-to holding times  [s]
 	T: null, 	// [KxK] from-to jump MLE state times [s]
 	P: null,	// [KxK] from-to cummulative transition probabilities
@@ -51,6 +53,7 @@ var RAN = module.exports = {
 	E: null, 	// [K] count of ensemble in state [1:N]
 
 	// two-state markov parameters
+	
 	alpha: 0,  // on-to-off rate [jumps/s]
 	beta: 0,  // off-to-on rate [jumps/s]
 	p: 0,  // on state pr 
@@ -62,18 +65,22 @@ var RAN = module.exports = {
 	Tc: 0,  // coherence time >0 [s] 
 	dt: 0, // sample time [s]
 	t: 0, // step time [s]
-	s: 0, // normalize step time [0:1]
 
 	steps: 0, // number of steps 
 	jumps: 0, // number of jumps
 	samples: 0, // number of elements scanned
+	realtime: null, // realtime process parameters
 	
 	// external pkgs
 	
-	MVN: require("multivariate-normal").default,
-	MLE: require("expectation-maximization"),
+	MVN: require("multivariate-normal").default,  // gauss multivariate
+	MLE: require("expectation-maximization"),  // MLE for mixed gauss ensembes
 
-	jump: function (fr, cb) {  // jump from fr state with callback cb(to state,exp time drawn)
+	/*
+	Jump from fr state with callback cb(to state,exp time drawn)
+	*/
+
+	jump: function (fr, cb) {   // compute to state via fr state
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
 
@@ -99,37 +106,62 @@ var RAN = module.exports = {
 		cb( to, R[fr][fr] = expdev( R[fr][to] ) );  // draw and store new exptime
 	},
 	
-	step: function (cb) {  // advance the process
-		var Ut=RAN.Ut,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E,G=RAN.G;
-		var jump = RAN.jump;
-		var t = RAN.t, x = RAN.x, y = RAN.y, N=RAN.N;
-		var onjump = RAN.on.jump;
+	/*
+	Step process with callback cb( store ) where the cb may add observations to
+	it store.
+	*/
+	
+	step: function (cb) {  // step process with callback cb(store)
+		var 
+			U=RAN.U,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,Z=RAN.Z,K=RAN.K,E=RAN.E,G=RAN.G,
+			jump = RAN.jump, onjump = RAN.on.jump,
+			t = RAN.t, dt = RAN.dt, N=RAN.N,
+			jstore = RAN.store.jump, sstore = RAN.store.step;
 		
-		// initialize counts in state
-		
-		for (var k=0; k<K; k++) E[k] = 0;  
-		
-		for (var n=0; n<N; n++)  { // scan the ensemble
-
-			if ( t >= H[n] )    // holding time exceeded so jump to new state
-				jump( fr = Ut[n], function (to, h) {  // get new state
-					Ut[n] = to;
-
-					onjump(n,fr,to,h,x); // callback with jump info
-					
-					T[ U0[n] ][to] += (t-H[n])+h;  // advance cummulative time-in-state  
-					H[n] = t + h;    // advance next-jump time 
-				});
-
-			var fr = U0[n], to = Ut[n];
-			
-			Z[ fr ][ to ]++;  // count the transition
-			E[ to ]++; // count number in state
+		for (var k=0; k<K; k++) {  // clear counts in state
+			E[k] = 0;  
 		}
-
-		// step wiener process
 		
-		if (M = RAN.wiener) {
+		if (rt = RAN.realtime)  // realtime process
+			rt.fetch(rt.agent, function (events) {  // fetch events
+				events.each(function (k,event) {  // process an event
+					rt.scan(event, function (state,n) { // get its state and ensemble index
+						var fr = U0[n], to = U[n];
+						
+						if ( to != state ) {  // state changed so force a jump
+							onjump(n,to,state,0,jstore); 	// callback with jump info
+							
+							to = state;  // new state
+							T[ fr ][ to ] += t - H[n];  // advance cummulative time-in-state  
+							H[ n ] = t;	// mark jump time
+							U[ n ] = to;	// update state
+						}
+						
+						Z[ fr ][ to ]++;  // step time-in-state counter
+						E[ to ]++; 		// step number in state						
+					});
+				});				
+			});
+	
+		else // simulated process
+			for (var n=0; n<N; n++)  { // scan the ensemble
+				var fr = U0[n], to = U[n];
+
+				if ( t >= H[n] )    // holding time exceeded so jump to new state
+					jump( to, function (state, h) {  // get to state and its holding time
+						onjump(n,to,state,h,jstore); 	// callback with jump info
+
+						to = state;  // new state
+						T[ fr ][ to ] += (t - H[n]) + h; 	// advance cummulative time-in-state  
+						U[ n ] = to;
+						H[ n ] = t + h;    // advance to next-jump time 
+					});
+
+				Z[ fr ][ to ]++;  // step time-in-state counter
+				E[ to ]++; 		// step number in state
+			}
+
+		if (M = RAN.wiener) {  // step wiener process
 			var floor = Math.floor, sqrt = Math.sqrt, nrv = RAN.NRV.sample, W = RAN.W, Q = RAN.Q;
 			
 			for (var t=RAN.steps,n=0; n<N; n++) {				
@@ -139,9 +171,9 @@ var RAN = module.exports = {
 			}
 		}
 		
-		// update cummulative counts
-		
-		for (var k=0; k<K; k++) G[k] += E[k];  
+		for (var k=0; k<K; k++) {  // update cummulative counts
+			G[k] += E[k];  
+		}
 		
 		RAN.activity.add( N - E[0] );
 		
@@ -149,11 +181,22 @@ var RAN = module.exports = {
 											 
 		RAN.t += RAN.dt; RAN.steps++; RAN.samples += N;
 		
-		if (y) cb(y);
+		if (sstore) cb(sstore);
 	},
 		
-	run: function (steps, cb) {	  // run the process for number of steps
-		var exp = Math.exp, log = Math.log;			
+	/*
+	Run process for steps then callback cb(jump store, step store, stats) where
+	the cb may append jump and step observations to its stores, and stats contains 
+	final process metrics.
+	*/
+	
+	run: function (steps, cb) {	  
+		var 
+			exp = Math.exp, 
+			log = Math.log,		
+			steps = Math.floor(steps),
+			step = RAN.step,
+			onstep = RAN.on.step;
 
 		function poisson(m,a) {
 			// a^m e(-a) / m!
@@ -161,40 +204,51 @@ var RAN = module.exports = {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		var step = RAN.step,onstep = RAN.on.step;
-		
-		steps = Math.floor(steps);
-		var ds = 1/steps;
-		RAN.s = 0;
-		
-		while ( steps-- ) {
-			step(onstep);
-			RAN.s += ds;
+		function play(cb) {  // callback cb with computed stats and return process-ok flag
+			
+			RAN.eqrates();  // update estimated rates
+
+			var	
+				avgcount = RAN.N * (1 - RAN.piEq[0]),
+				stats = [],
+				act = RAN.activity;
+
+			act.norm();
+
+	//console.log(["eq",RAN.piEq,avgcount]);
+
+			for (var bin=0, bins=act.bins; bin<bins; bin++) {
+				var count = act.count[bin];
+				stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
+			}
+			
+			return cb(RAN.store.jump, RAN.store.step, stats);
 		}
-
-		RAN.eqrates();
-
-		var	
-			avgcount = RAN.N * (1 - RAN.piEq[0]),
-			stats = [],
-			act = RAN.activity;
-
-		act.norm();
-
-//console.log(["eq",RAN.piEq,avgcount]);
-
-		for (var bin=0, bins=act.bins; bin<bins; bin++) {
-			var count = act.count[bin];
-			stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
-		}
+		
+		if (rt = RAN.realtime)  // realtime process
+			rt.tid = setInterval( function(rt) {  // set next data fetch time
+				step(onstep);
+					
+				if (RAN.steps % steps == 0) 
+					if ( !play(cb) )
+						clearInterval(rt.tid);
 				
-//console.log(stats);
-		if (cb) cb(RAN.x, RAN.y, stats);
+			}, RAN.dt*1e3, rt);
+			
+		else { // simulated process
+			do {  // until process terminated
+				for (var s=0; s<steps; s++)  // advance over normalized time
+					step(onstep);
+		//console.log(stats);
+			}
+		
+			while ( play(cb) );
+		}
 		
 		return RAN;
 	},
 	
-	range: function (min,max) {
+	range: function (min,max) { // generates a range
 		var ran = new Array(max-min+1);
 		for (var n=min,m=0,M=ran.length; m<=M; m++) ran[m] = n += 1;
 		return ran;
@@ -202,7 +256,7 @@ var RAN = module.exports = {
 	
 	corr: function () {  // statistical correlation function
 		var K = RAN.K, sym = RAN.sym, cor = 0, Z = RAN.Z, zN = RAN.samples, cor0=RAN.cor0;
-//console.log(["cor",RAN.t,RAN.steps,Z,RAN.U0.join(""),RAN.Ut.join("")]);
+//console.log(["cor",RAN.t,RAN.steps,Z,RAN.U0.join(""),RAN.U.join("")]);
 
 		for (var fr=0; fr<K; fr++) 
 			for (var to=0, Zfr=Z[fr]; to<K; to++) 	
@@ -227,60 +281,77 @@ var RAN = module.exports = {
 		for (var to=0; to<K; to++) piEq[to] /= K;
 	},
 	
-	config: function (opts) {  // configure
+	config: function (opts) {  // configure the process
 	
 		if (opts) Copy(opts, RAN);
 
 		var N = RAN.N, A = RAN.A;
+		var sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
-		if (A.constructor == Object) 
-			if (A.alpha)  { // two-state markov process via alpha,beta parms
-				var 
-					alpha = RAN.alpha = A.alpha, 
-					beta = RAN.beta = A.beta, 
-					p = alpha / (alpha + beta), 
-					q = 1 - p,
-					A = RAN.A = [[-alpha, alpha], [beta, -beta]],
-					pi = RAN.pi = [p, q];	
-			}
+		if (A.alpha)  { // two-state markov process via alpha,beta parms
+			var 
+				alpha = RAN.alpha = A.alpha, 
+				beta = RAN.beta = A.beta, 
+				p = alpha / (alpha + beta), 
+				q = 1 - p,
+				A = RAN.A = [[-alpha, alpha], [beta, -beta]],
+				pi = RAN.pi = [p, q];	
+		}
+
+		else
+		if (A.p)  { // two-state markov process via p,Tc parms
+			var
+				p = A.p, 
+				Tc = A.Tc, 
+				q = 1 - p,
+				alpha = RAN.alpha = 2.3 * q / Tc, 
+				beta = RAN.beta = 2.3 * p / Tc,
+				A = RAN.A = [[-alpha, alpha], [beta, -beta]],
+				pi = RAN.pi = [p, q];
+		}
+
+		else
+		if (dt = A.dt) { // realtime process
+			var
+				rt = RAN.realtime = Copy(A, {}),
+				fs = 1/dt,
+				fb = fs / RAN.nyquist,
+				n = rt.n,
+				Tc = fb / n,
+				lambda = 2.3 / Tc,
+				K = ( 1 + Math.sqrt(1+4*n) ) / 2,			
+				A = RAN.A = matrix(K,K);
+		}
 		
-			else
-			if (A.p)  { // two-state markov process via p,Tc parms
-				var
-					p = A.p, 
-					Tc = A.Tc, 
-					q = 1 - p,
-					alpha = RAN.alpha = 2.3 * q / Tc, 
-					beta = RAN.beta = 2.3 * p / Tc,
-					A = RAN.A = [[-alpha, alpha], [beta, -beta]],
-					pi = RAN.pi = [p, q];
-			}
-		
-			else
-			if (K = A.K) { // K-state via random rate generator
-				var A = RAN.A = matrix(K,K), rand = Math.random, floor = Math.floor;
-				for (var fr=0; fr<K; fr++) 
-					for (var to=0; to<K; to++) 
-						A[fr][to] = floor(rand()*10)+1;
-			}
+		else
+		if (n = A.n) { // K-state via random rate generator given n = K^2 - K rates
+			var 
+				K = ( 1 + Math.sqrt(1+4*n) ) / 2,
+				A = RAN.A = matrix(K,K);
+
+			for (var fr=0; fr<K; fr++) 
+				for (var to=0; to<K; to++) 
+					A[fr][to] = floor(rand() * 10) + 1;
+		}
 				
-			else
-				console.log("Houston we have a problem");
-				
-		// compute sampling rate and coherence time
+		// compute (recompute) sampling rate and coherence time
 
-		var K = RAN.K = A.length;
-		var lambda = RAN.lambda = avgrate(A);
-		var Tc = RAN.Tc = 2.3 / lambda;
-		var dt = RAN.dt = Tc / (K*K-K) / RAN.nyquist;
+		var 
+			K = RAN.K = A.length,  // number of states
+			n = K*K - K, // number of jump rates
+			lambda = RAN.lambda = avgrate(A),  // average jump rate
+			Tc = RAN.Tc = 2.3 / lambda, // coherence time
+			fb = n / Tc, // process bandwidth
+			fs = fb * RAN.nyquist, // sample rate
+			dt = RAN.dt = 1/fs; // sample time
 		
-		if (1/dt < 2/Tc)
-			console.log("Woa there cowboy - your sampling rate is subNyquist");
+		if (RAN.nyquist < 1)
+			console.log("Woa there cowboy - your sampling rate is sub Nyquist");
 
-		// default state symbols
-	
-		var sym = RAN.sym;
-		if ( !sym ) {
+		if ( sym = RAN.sym ) {  // use supplied state symbols
+		}
+		
+		else {  // default state symbols
 			var sym = RAN.sym = matrix(K);
 
 			if (K % 2) {
@@ -299,9 +370,7 @@ var RAN = module.exports = {
 			console.log(["sym",sym]);
 		}
 
-		// enforce global balance
-		
-		for (var fr=0; fr<K; fr++) {  
+		for (var fr=0; fr<K; fr++) {  // enforce global balance
 			for (var to=0, Afr=A[fr], A0=0; to<K; to++)
 				A0 += (fr == to) ? 0 : Afr[to];
 		
@@ -318,91 +387,86 @@ var RAN = module.exports = {
 		var Z = RAN.Z = matrix(K,K);
 		var H = RAN.H = matrix(N);
 		var E = RAN.E = matrix(K);
-		var Ut = RAN.Ut = matrix(N);
+		var U = RAN.U = matrix(N);
 		var U0 = RAN.U0 = matrix(N);
 		var W = RAN.W = RAN.wiener ? matrix(N) : [];
 		var Q = RAN.Q = RAN.wiener ? matrix(N) : [];
 		var G = RAN.G = matrix(K);
 
-		// default state probabilities
-		
-		for (var k=0,pi0=1/K; k<K; k++) piEq[k] = pi[k] = pi0;
-		
-		var p = RAN.p = pi[0], q = RAN.q = 1-p;
-
-		// compute average holding times
-
-		for (var fr=0; fr<K; fr++)   
-			for (var to=0, Afr=A[fr], Rfr=R[fr]; to<K; to++) 
-				if ( Tc )
-					Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
-				else
-					Rfr[to] = 0;
-		
-		// seed the ensemble
-
-		switch (RAN.jumpModel) {
-			case "poisson":
-				for (var fr=0; fr<K; fr++) Poisson( fr, P, A );
-				break;
-				
-			case "gillespie":
-				for (var fr=0; fr<K; fr++) Gillespie( fr, P, R );
+		for (var k=0,pi0=1/K; k<K; k++) {  // default state probabilities
+			piEq[k] = pi[k] = pi0;
 		}
 		
-		var jump = RAN.jump, floor = Math.floor, rand = Math.random;
+		var p = RAN.p = pi[0], q = RAN.q = 1 - p;
 
-		RAN.t = RAN.steps = RAN.jumps = RAN.samples = 0;
+		if (rt = RAN.rt) { // initialize realtime process
+			for (var n=0; n<N; n++) {
+				H[n] = 0;
+				U[n] = U0[n] = -1;
+			}
+		}
 		
-		// intialize state counters
-		
-		for (var fr=0; fr<K; fr++) 
-			for (var Tfr=T[fr], Zfr=Z[fr], to=0; to<K; to++) 
-				Zfr[to] = Tfr[to] = 0;
-		
-		// initalize the ensemble
-		
-		if (K == 2)  // two-state 
-			for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
-				if ( n < Np ) {
-					var fr = U0[n] = Ut[n] = 1;
-					var h = H[n] = R[fr][fr] = expdev(Ton);
+		else { // initialize simulated process
+			for (var fr=0; fr<K; fr++) {  
+				for (var to=0, Afr=A[fr], Rfr=R[fr]; to<K; to++) {  // compute average holding times
+					if ( Tc )
+						Rfr[to] = (fr == to) ? 0 : 1/Afr[to];
+
+					else
+						Rfr[to] = 0;
 				}
-				else {
-					var fr = U0[n] = Ut[n] = 0;
-					var h = H[n] = R[fr][fr] = expdev(Toff);
-				}
-				T[fr][fr] += h;
+
+				Poisson( fr, P, A );  // seed the ensemble				
+				
+				for (var Tfr=T[fr], Zfr=Z[fr], to=0; to<K; to++)  { // intialize state counters
+					Zfr[to] = Tfr[to] = 0;
+				}				
 			}
 
-		else  // multi-state 
-			for (var n=0; n<N; n++) 
-				jump( fr = floor(rand() * K), function (to,h) {
-					U0[n] = Ut[n] = fr;
-					H[n] = h;	
+			RAN.t = RAN.steps = RAN.jumps = RAN.samples = 0;
+
+			if (K == 2)  { // initialize two-state process
+				for (var n=0, Np=N*p, Ton=R[0][1], Toff=R[1][0]; n<N; n++)  {
+					if ( n < Np ) {
+						var fr = U0[n] = U[n] = 1;
+						var h = H[n] = R[fr][fr] = expdev(Ton);
+					}
+
+					else {
+						var fr = U0[n] = U[n] = 0;
+						var h = H[n] = R[fr][fr] = expdev(Toff);
+					}
+
 					T[fr][fr] += h;
-				});
+				}
+			}
 
-		// symbol variance to normalize correlations
+			else  { // initialize K-state process
+				for (var jump = RAN.jump, n=0; n<N; n++) 
+					jump( fr = floor(rand() * K), function (to,h) {
+						U0[n] = U[n] = fr;
+						H[n] = h;	
+						T[fr][fr] += h;
+					});
+			}
 
-		RAN.cor0 = 0;
-		for (var k=0; k<K; k++) 
-			RAN.cor0 += sym[k] * sym[k] * pi[k];
-		
-		//  initialilze wiener processes
+			RAN.cor0 = 0;
+			for (var k=0; k<K; k++) {  // get symbol variance to normalize correlations
+				RAN.cor0 += sym[k] * sym[k] * pi[k];
+			}
 
-		if (RAN.wiener) {
-			RAN.NRV = RAN.MVN( [0], [[1]] );
-			for (var n=0; n<N; n++) W[n] = Q[n] = 0;
+			if (RAN.wiener) {  //  initialilze wiener processes
+				RAN.NRV = RAN.MVN( [0], [[1]] );
+				for (var n=0; n<N; n++) W[n] = Q[n] = 0;
+			}
+
 		}
-
-		// clear cummulative counts in state
 		
-		for (var k=0; k<K; k++) G[k] = 0;  		
+		for (var k=0; k<K; k++) {  // clear cummulative counts in state
+			G[k] = 0;  		
+		}
 		
-		// initialize ensemble counting stats
-		
-		RAN.activity = new STATS(RAN.bins,N);
+		RAN.activity = new STATS(RAN.bins,N);  // initialize ensemble stats
 		
 		return RAN;
 	}
@@ -488,8 +552,10 @@ function test() {
 		sym: [-1,1],
 
 		nyquist: 10,
-		x: [],
-		y: [],
+		store: {
+			jump: [],
+			step: []
+		},
 		cb: {
 			jump: function (n,fr,to,h,x) {
 				x.push( mvd.sample() );
