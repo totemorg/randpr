@@ -612,4 +612,8 @@ function test() {
 
 }
 
-test();
+function Trace(msg,arg) {
+	ENUM.trace("R>",msg,arg);
+}
+
+//test();
