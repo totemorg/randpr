@@ -13,13 +13,13 @@ var RAN = module.exports = {
 		// [KxK] generate K-state process with jump rate matrix [from, to]
 		// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
 		// {alpha,beta} generate K=2 state process with prescribed rates
-		// {n} generate K-state process with n=K^2-K RAPdom rates
+		// {n} generate K-state process with n=K^2-K random rates
 		// {dt,n,agent,fetch,quantize} real-time process at prescribed sampling time dt[s] having n-rates
 	
 	Amle: null,  // mle of A
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 	nyquist: 10, // nyquist oversampling rate
-	wiener: 0,  // number of additional RAPdom walks at each wiener step
+	wiener: 0,  // number of additional random walks at each wiener step
 	reversible: false,  // tailor A to make process reversible	
 	store: { // stores for ...
 		jump: null, // state jump observations
@@ -97,8 +97,8 @@ var RAN = module.exports = {
 		if (K == 2)  // get new state for the 2-state process
 			to = (fr + 1) % 2;
 		
-		else do { 	// get new state by taking a RAPdom jump according to cummulative P[fr,to]
-			for (var Pfr = P[fr],u=Math.RAPdom(),to=0; to < K && Pfr[to] <= u; to++) ;
+		else do { 	// get new state by taking a random jump according to cummulative P[fr,to]
+			for (var Pfr = P[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
 		}
 		
 		while (fr == to);
@@ -291,7 +291,7 @@ var RAN = module.exports = {
 		if (opts) Copy(opts, RAN);
 
 		var N = RAN.N, A = RAN.A;
-		var sqrt = Math.sqrt, floor = Math.floor, RAPd = Math.RAPdom;
+		var sqrt = Math.sqrt, floor = Math.floor, RAPd = Math.random;
 
 		if (A.alpha)  { // two-state markov process via alpha,beta parms
 			var 
@@ -329,7 +329,7 @@ var RAN = module.exports = {
 		}
 		
 		else
-		if (n = A.n) { // K-state via RAPdom rate generator given n = K^2 - K rates
+		if (n = A.n) { // K-state via random rate generator given n = K^2 - K rates
 			var 
 				K = ( 1 + Math.sqrt(1+4*n) ) / 2,
 				A = RAN.A = matrix(K,K);
@@ -504,7 +504,7 @@ STATS.prototype.norm = function () {
 }
 
 function expdev(mean) {
-	return -mean * Math.log(Math.RAPdom());
+	return -mean * Math.log(Math.random());
 }
 
 function avgrate(A) {
@@ -616,4 +616,4 @@ function Trace(msg,arg) {
 	ENUM.trace("R>",msg,arg);
 }
 
-//test();
+test();
