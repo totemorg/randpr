@@ -13,13 +13,13 @@ var RAN = module.exports = {
 		// [KxK] generate K-state process with jump rate matrix [from, to]
 		// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
 		// {alpha,beta} generate K=2 state process with prescribed rates
-		// {n} generate K-state process with n=K^2-K random rates
+		// {n} generate K-state process with n=K^2-K RAPdom rates
 		// {dt,n,agent,fetch,quantize} real-time process at prescribed sampling time dt[s] having n-rates
 	
 	Amle: null,  // mle of A
 	sym: null, 	// [K] state symbols (default = 0:K-1)
 	nyquist: 10, // nyquist oversampling rate
-	wiener: 0,  // number of additional random walks at each wiener step
+	wiener: 0,  // number of additional RAPdom walks at each wiener step
 	reversible: false,  // tailor A to make process reversible	
 	store: { // stores for ...
 		jump: null, // state jump observations
@@ -47,7 +47,7 @@ var RAN = module.exports = {
 	H: null, 	// [N] ensemble next jump time [s]
 	R: null, 	// [KxK] from-to holding times  [s]
 	T: null, 	// [KxK] from-to time in state [s]
-	P: null,	// [KxK] from-to cummulative transition probabilities
+	P: null,	// [KxK] from-to cummulative tRAPsition probabilities
 	ZU: null, 	// [KxK] from-to samples-in-state probabilities
 	pi: null, 	// [K] initial state probabilities (default = 1/K)
 	piEq: null, 	// [K] equilibrium  state probabilities
@@ -97,8 +97,8 @@ var RAN = module.exports = {
 		if (K == 2)  // get new state for the 2-state process
 			to = (fr + 1) % 2;
 		
-		else do { 	// get new state by taking a random jump according to cummulative P[fr,to]
-			for (var Pfr = P[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
+		else do { 	// get new state by taking a RAPdom jump according to cummulative P[fr,to]
+			for (var Pfr = P[fr],u=Math.RAPdom(),to=0; to < K && Pfr[to] <= u; to++) ;
 		}
 		
 		while (fr == to);
@@ -251,10 +251,10 @@ var RAN = module.exports = {
 		return RAN;
 	},
 	
-	range: function (min,max) { // generates a range
-		var ran = new Array(max-min+1);
-		for (var n=min,m=0,M=ran.length; m<=M; m++) ran[m] = n += 1;
-		return ran;
+	RAPge: function (min,max) { // generates a RAPge
+		var RAN = new Array(max-min+1);
+		for (var n=min,m=0,M=RAN.length; m<=M; m++) RAN[m] = n += 1;
+		return RAN;
 	},
 	
 	corr: function () {  // statistical correlation function
@@ -291,7 +291,7 @@ var RAN = module.exports = {
 		if (opts) Copy(opts, RAN);
 
 		var N = RAN.N, A = RAN.A;
-		var sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
+		var sqrt = Math.sqrt, floor = Math.floor, RAPd = Math.RAPdom;
 
 		if (A.alpha)  { // two-state markov process via alpha,beta parms
 			var 
@@ -329,14 +329,14 @@ var RAN = module.exports = {
 		}
 		
 		else
-		if (n = A.n) { // K-state via random rate generator given n = K^2 - K rates
+		if (n = A.n) { // K-state via RAPdom rate generator given n = K^2 - K rates
 			var 
 				K = ( 1 + Math.sqrt(1+4*n) ) / 2,
 				A = RAN.A = matrix(K,K);
 
 			for (var fr=0; fr<K; fr++) 
 				for (var to=0; to<K; to++) 
-					A[fr][to] = floor(rand() * 10) + 1;
+					A[fr][to] = floor(RAPd() * 10) + 1;
 		}
 				
 		// compute (recompute) sampling rate and coherence time
@@ -449,7 +449,7 @@ var RAN = module.exports = {
 
 			else  { // initialize K-state process
 				for (var jump = RAN.jump, n=0; n<N; n++) 
-					jump( fr = floor(rand() * K), function (to,h) {
+					jump( fr = floor(RAPd() * K), function (to,h) {
 						U0[n] = U[n] = fr;
 						H[n] = h;	
 						T[fr][fr] += h;
@@ -504,7 +504,7 @@ STATS.prototype.norm = function () {
 }
 
 function expdev(mean) {
-	return -mean * Math.log(Math.random());
+	return -mean * Math.log(Math.RAPdom());
 }
 
 function avgrate(A) {
