@@ -191,7 +191,7 @@ var RAN = module.exports = {
 	final process metrics.
 	*/
 	
-	run: function (steps, cb) {	  
+	start: function (steps, cb) {	  
 		var 
 			exp = Math.exp, 
 			log = Math.log,		
@@ -586,7 +586,7 @@ function test() {
 	var steps = 400 * RAN.Tc/RAN.dt;
 	console.log([steps,RAN.Tc,RAN.dt]);
 	
-	RAN.run(steps, function (y) {
+	RAN.start(steps, function (y) {
 		var  t = RAN.t, n = t / RAN.Tc, N = RAN.N;
 			//cnt = N-RAN.NU[0], lambda = (cumcnt+=cnt)/t , 
 			//lambda0 = N/RAN.dt;
