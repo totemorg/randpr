@@ -239,8 +239,10 @@ var RAN = module.exports = {
 			
 		else { // simulated process
 			do {  // until process terminated
-				for (var s=0; s<steps; s++)  // advance over normalized time
+				for (var s=0; s<steps; s++)  {// advance over normalized time
+					console.log([s,steps,RAN.store.step.length]);
 					step(onstep);
+				}
 		//console.log(stats);
 			}
 		
