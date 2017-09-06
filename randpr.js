@@ -1,85 +1,161 @@
 var 														// Totem modules
-	ENUM = require("../enum");
+	ENUM = require("../enum"),
+	STREAM = require("stream");
 	
 var															// shortcuts
 	Copy = ENUM.copy,
 	Each = ENUM.each;
 
-var RAN = module.exports = {
-	// configuration
+var LOG = console.log;
 
-	N: 0, 		// ensemble size
-	A: null,	// process parameters: [dims, units, or range]
-		// [KxK] generate K-state process with jump rate matrix [from, to]
-		// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
-		// {alpha,beta} generate K=2 state process with prescribed rates
-		// {n} generate K-state process with n=K^2-K unqiue random rates
-		// {K} generate K-state process with n=K^2-K unqiue random rates
-		// {dt,n,agent,fetch,quantize} real-time process at prescribed sampling time dt[s] having n-rates
+var RAN = module.exports = function RAN(opts) {
 	
-	Amle: null,  // mle of A: [dims, units, or range]
-	sym: null, 	// [K] state symbols (default = 0:K-1)
-	nyquist: 10, // nyquist oversampling rate
-	wiener: 0,  // number of additional random walks at each wiener step
-	reversible: false,  // tailor A to make process reversible	
-	store: { // stores for ...
-		jump: null, // [] if storing jump observations
-		step: null // [] if storeing step observations
-	},
-	bins: 0,  // number of bins for histogram stats
-	jumpModel: "poisson",   // typically not used
-	on: {  // event callbacks for ...
-		jump: function (x) {},  // on state jump
-		step: function (y) {} // on time step
-	},
+	this.config( Copy(opts || {} , {  // configuration
 
-	// output
+		N: 0, 		// ensemble size
+		A: null,	// process parameters: [dims, units, or range]
+			// [KxK] generate K-state process with jump rate matrix [from, to]
+			// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
+			// {alpha,beta} generate K=2 state process with prescribed rates
+			// {n} generate K-state process with n=K^2-K unqiue random rates
+			// {K} generate K-state process with n=K^2-K unqiue random rates
+			// {dt,n,agent,fetch,quantize} real-time process at prescribed sampling time dt[s] having n-rates
 
-	// wiener process: [dims, units, or range]
-	WU: null, 		// [N] wiener ensemble
-	WQ: null, 		// [N] wiener cummulative walk ensemble
-	
-	// markov process: [dims, units, or range]
-	K: 0, 		// #states >= 1 inferred from supplied A rates
-	U: null,    // [N] ensemble states [0:K-1] at time t
-	U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
-	H: null, 	// [N] ensemble next jump time [s]
-	R: null, 	// [KxK] from-to holding times  [s]
-	T: null, 	// [KxK] from-to time in state [s]
-	P: null,	// [KxK] from-to cummulative transition probabilities
-	ZU: null, 	// [KxK] from-to samples-in-state probabilities
-	pi: null, 	// [K] initial state probabilities (default = 1/K)
-	piEq: null, 	// [K] equilibrium  state probabilities
-	NU: null, 	// [K] count of ensemble in state [1:N]
+		Amle: null,  // mle of A: [dims, units, or range]
+		sym: null, 	// [K] state symbols (default = 0:K-1)
+		nyquist: 10, // nyquist oversampling rate
+		wiener: 0,  // number of additional random walks at each wiener step
+		reversible: false,  // tailor A to make process reversible	
+		store: { // stores for ...
+			jump: null, // [] if storing jump observations
+			step: null // [] if storeing step observations
+		},
+		bins: 0,  // number of bins for histogram stats
+		jumpModel: "poisson",   // typically not used
+		intervals: 10, // maximum number of coherence intervals to write streams
 
-	// two-state markov parameters
-	
-	alpha: 0,  // on-to-off rate [jumps/s]
-	beta: 0,  // off-to-on rate [jumps/s]
-	p: 0,  // on state pr 
-	q: 0,  // off(not on) state pr 
-	
-	// K-state parameters
+		ingestStream: new STREAM.Readable({
+			objectMode: true
+		}),
 
-	lambda: 0,  // average jump rate [jumps/s]
-	Tc: 0,  // coherence time >0 [s] 
-	dt: 0, // sample time [s]
-	t: 0, // step time [s]
+		outStream: process.stdout,
 
-	steps: 0, // number of steps 
-	jumps: 0, // number of jumps
-	samples: 0, // number of elements scanned
-	realtime: null, // realtime process parameters
-	
-	// external pkgs
-	
-	MVN: require("multivariate-normal").default,  // gauss multivariate
-	MLE: require("expectation-maximization"),  // MLE for mixed gauss ensembles
+		ranStream: new STREAM.Readable({
+			objectMode: true,
+			read: function () {
+				if ( RAN.steps * RAN.dt/RAN.Tc < RAN.intervals ) {			
+					LOG("reading 20 steps");
+					RAN.start(20);
+				}
+				else
+					this.push(null);
+			}
+		}),
 
+		filter: function (str,ev) {  //< stream filter
+			switch ( ev[0] ) {
+				case "stats":
+					str.push( JSON.stringify(ev) );
+					break;
+			}
+			return null;
+		},
+
+		editStream: new STREAM.Transform({
+			writableObjectMode: true,
+			transform: function (ev,en,cb) {
+				cb( RAN.filter(this,ev) );
+			}
+		}),
+
+		onStats: function (stats) {  //< null to disable
+			RAN.ranStream.push(["stats",RAN.t,RAN.steps, {
+				hist: stats,
+				number_of_steps: RAN.steps,
+				number_of_state_jumps: RAN.jumps, 
+				coherence_intervals: n = RAN.t / RAN.Tc, 
+				correlation_computed: RAN.corr(), 
+				correlation_theory: Math.exp(-n),
+				current_time: RAN.T,
+				jumprate_mle: RAN.Amle
+			}]);
+		},
+
+		onJump: function (idx,to,from,hold) {  // null to disable
+			RAN.ranStream.push(["jump",RAN.t,RAN.steps,idx,to,from,hold]);
+		},
+
+		onStep: function () {		// null to disable
+			RAN.ranStream.push(["step",RAN.t, RAN.steps]);
+		},
+
+		ingest:  function (ev) {
+
+			var
+				U=RAN.U,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,ZU=RAN.ZU,K=RAN.K,NU=RAN.NU,KU=RAN.KU,		
+				n = ev.n,
+				t = ev.t,
+				fr = U0[n], to = ev.s;
+
+			T[ fr ][ to ] +=  t - H[n]; 	// advance cummulative time-in-state  
+			U[ n ] = to;  		// set state
+			H[ n ] = t;    		// hold time of last jump
+
+			ZU[ fr ][ to ]++;  // step samples-in-state counter
+			NU[ to ]++; 		// step number-in-state counter
+
+		},
+
+		// output
+
+		// wiener process: [dims, units, or range]
+		WU: null, 		// [N] wiener ensemble
+		WQ: null, 		// [N] wiener cummulative walk ensemble
+
+		// markov process: [dims, units, or range]
+		K: 0, 		// #states >= 1 inferred from supplied A rates
+		U: null,    // [N] ensemble states [0:K-1] at time t
+		U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
+		H: null, 	// [N] ensemble next jump time [s]
+		R: null, 	// [KxK] from-to holding times  [s]
+		T: null, 	// [KxK] from-to time in state [s]
+		P: null,	// [KxK] from-to cummulative transition probabilities
+		ZU: null, 	// [KxK] from-to samples-in-state probabilities
+		pi: null, 	// [K] initial state probabilities (default = 1/K)
+		piEq: null, 	// [K] equilibrium  state probabilities
+		NU: null, 	// [K] count of ensemble in state [1:N]
+
+		// two-state markov parameters
+
+		alpha: 0,  // on-to-off rate [jumps/s]
+		beta: 0,  // off-to-on rate [jumps/s]
+		p: 0,  // on state pr 
+		q: 0,  // off(not on) state pr 
+
+		// K-state parameters
+
+		lambda: 0,  // average jump rate [jumps/s]
+		Tc: 0,  // coherence time >0 [s] 
+		dt: 0, // sample time [s]
+		t: 0, // step time [s]
+
+		steps: 0, // number of steps 
+		jumps: 0, // number of jumps
+		samples: 0, // number of elements scanned
+		realtime: null // realtime process parameters
+
+	}) );
+
+}
+
+// external pkgs
+RAN.MVN = require("multivariate-normal").default;  // gauss multivariate
+RAN.MLE = require("expectation-maximization");  // MLE for mixed gauss ensembles
+
+RAN.prototype = {
 	/*
 	Jump from fr state with callback cb(to state,exp time drawn)
 	*/
-
 	jump: function (fr, cb) {   // compute to state via fr state
 		
 		var K = RAN.K, R = RAN.R, P = RAN.P, A = RAN.A;
@@ -110,18 +186,17 @@ var RAN = module.exports = {
 	Step process with callback cb( store ) where the cb may add observations to
 	it store.
 	*/
-	
-	step: function (cb) {  // step process with callback cb(store)
+	step: function (onStep) {  // step process with callback cb(store)
 		var 
 			U=RAN.U,H=RAN.H,R=RAN.R,U0=RAN.U0,T=RAN.T,ZU=RAN.ZU,K=RAN.K,NU=RAN.NU,KU=RAN.KU,
-			jump = RAN.jump, onjump = RAN.on.jump,
-			t = RAN.t, dt = RAN.dt, N=RAN.N,
-			jstore = RAN.store.jump, sstore = RAN.store.step;
+			jump = RAN.jump, onJump = RAN.onJump,
+			t = RAN.t, dt = RAN.dt, N=RAN.N;
 		
 		for (var k=0; k<K; k++) {  // clear counts in state
 			NU[k] = 0;  
 		}
 		
+		/*
 		if (rt = RAN.realtime)  // realtime process
 			rt.fetch(rt.agent, function (events) {  // fetch events
 				events.each(function (k,event) {  // process an event
@@ -129,7 +204,7 @@ var RAN = module.exports = {
 						var fr = U0[n], to = U[n];
 						
 						if ( to != state ) {  // state changed so force a jump
-							onjump(n,to,state,0,jstore); 	// callback with jump info
+							onJump(n,to,state,0); 	// callback with jump info
 							
 							to = state;  // new state
 							T[ fr ][ to ] += t - H[n];  // advance cummulative time-in-state  
@@ -141,25 +216,26 @@ var RAN = module.exports = {
 						NU[ to ]++; 		// step number in state						
 					});
 				});				
-			});
+			});  
 	
 		else // simulated process
-			for (var n=0; n<N; n++)  { // quantize the ensemble
-				var fr = U0[n], to = U[n];
+		*/
+		for (var n=0; n<N; n++)  { // scan the ensemble
+			var fr = U0[n], to = U[n];
 
-				if ( t >= H[n] )    // holding time exceeded so jump to new state
-					jump( to, function (state, h) {  // get to state and its holding time
-						onjump(n,to,state,h,jstore); 	// callback with jump info
+			if ( t >= H[n] )    // holding time exceeded so jump to new state
+				jump( to, function (state, h) {  // get to state and its holding time
+					if (onJump) onJump(n,to,state,h); 	// callback with jump info
 
-						to = state;  // new state
-						T[ fr ][ to ] += (t - H[n]) + h; 	// advance cummulative time-in-state  
-						U[ n ] = to;  // set state
-						H[ n ] = t + h;    // advance to next-jump time 
-					});
+					to = state;  // new state
+					T[ fr ][ to ] += (t - H[n]) + h; 	// advance cummulative time-in-state  
+					U[ n ] = to;  		// set state
+					H[ n ] = t + h;    // advance to next-jump time 
+				});
 
-				ZU[ fr ][ to ]++;  // step samples-in-state counter
-				NU[ to ]++; 		// step number in state
-			}
+			ZU[ fr ][ to ]++;  // step samples-in-state counter
+			NU[ to ]++; 		// step number-in-state counter
+		}
 
 		if (M = RAN.wiener) {  // step wiener process
 			var floor = Math.floor, sqrt = Math.sqrt, nrv = RAN.NRV.sample, WU = RAN.WU, WQ = RAN.WQ;
@@ -181,7 +257,7 @@ var RAN = module.exports = {
 											 
 		RAN.t += RAN.dt; RAN.steps++; RAN.samples += N;
 		
-		if (sstore) cb(sstore);
+		if (onStep) onStep();
 	},
 		
 	/*
@@ -189,14 +265,12 @@ var RAN = module.exports = {
 	the cb may append jump and step observations to its stores, and stats contains 
 	final process metrics.
 	*/
-	
 	start: function (steps, cb) {	  
 		var 
 			exp = Math.exp, 
 			log = Math.log,		
 			steps = Math.floor(steps),
-			step = RAN.step,
-			onstep = RAN.on.step;
+			step = RAN.step, onStep = RAN.onStep, onStats = RAN.onStats;
 
 		function poisson(m,a) {
 			// a^m e(-a) / m!
@@ -204,50 +278,41 @@ var RAN = module.exports = {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		function play(cb) {  // callback cb with computed stats and return process-ok flag
-			
-			RAN.eqrates();  // update estimated rates
-
-			var	
-				avgcount = RAN.N * (1 - RAN.piEq[0]),
-				stats = [],
-				act = RAN.activity;
-
-			act.norm();
-
-	//console.log(["eq",RAN.piEq,avgcount]);
-
-			for (var bin=0, bins=act.bins; bin<bins; bin++) {
-				var count = act.count[bin];
-				stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
-			}
-			
-			return cb(RAN.store.jump, RAN.store.step, stats);
-		}
-		
+		/*
 		if (rt = RAN.realtime)  // realtime process
 			rt.fetch(agent+"&session options", function (ack) {
 				rt.tid = setInterval( function(rt) {  // set next data fetch time
-					step(onstep);
+					step();
 
 					if (RAN.steps % steps == 0) 
 						if ( !play(cb) )
 							clearInterval(rt.tid);
 
 				}, RAN.dt*1e3, rt);
-			});
+			}); 
 			
 		else { // simulated process
-			do {  // until process terminated
-				for (var s=0; s<steps; s++)  {// advance over normalized time
-					console.log([s,steps,RAN.store.step.length]);
-					step(onstep);
-				}
-		//console.log(stats);
-			}
+		*/
 		
-			while ( play(cb) );
+		for (var s=0; s<steps; s++)  step(onStep);  // advance over normalized time
+
+		RAN.eqrates();  // update estimated rates
+
+		var	
+			avgcount = RAN.N * (1 - RAN.piEq[0]),
+			stats = [],
+			act = RAN.activity;
+
+		act.norm();
+
+//LOG(["eq",RAN.piEq,avgcount]);
+
+		for (var bin=0, bins=act.bins; bin<bins; bin++) {
+			var count = act.count[bin];
+			stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
 		}
+
+		if (onStats) onStats(stats);
 		
 		return RAN;
 	},
@@ -260,7 +325,7 @@ var RAN = module.exports = {
 	
 	corr: function () {  // statistical correlation function
 		var K = RAN.K, sym = RAN.sym, cor = 0, ZU = RAN.ZU, zN = RAN.samples, cor0=RAN.cor0;
-//console.log(["cor",RAN.t,RAN.steps,ZU,RAN.U0.join(""),RAN.U.join("")]);
+//LOG(["cor",RAN.t,RAN.steps,ZU,RAN.U0.join(""),RAN.U.join("")]);
 
 		for (var fr=0; fr<K; fr++) 
 			for (var to=0, Zfr=ZU[fr]; to<K; to++) 	
@@ -361,10 +426,10 @@ var RAN = module.exports = {
 			fs = fb * RAN.nyquist, // sample rate
 			dt = RAN.dt = 1/fs; // sample time
 		
-		//console.log([n,K,lambda,Tc,RAN.nyquist,dt]);
+		//LOG([n,K,lambda,Tc,RAN.nyquist,dt]);
 		
 		if (RAN.nyquist < 1)
-			console.log("Woa there cowboy - your sampling rate is sub Nyquist");
+			LOG("Woa there cowboy - your sampling rate is sub Nyquist");
 
 		if ( sym = RAN.sym ) {  // use supplied state symbols
 		}
@@ -485,6 +550,8 @@ var RAN = module.exports = {
 		
 		RAN.activity = new STATS(RAN.bins,N);  // initialize ensemble stats
 		
+		//RAN.ingestStream.on("data", RAN.ingest);
+		
 		return RAN;
 	}
 };
@@ -555,71 +622,45 @@ function Gillespie( fr, P, R ) {
 
 function test() {
 	var 
-		mvp = {mu: [1,2], sigma: [[.9,.6],[.6,.7]]},
-		mvd = RAN.MVN(mvp.mu, mvp.sigma);
+		ran = new RAN({
+			N: 100,
+			wiener: 0,
+			bins: 50,
+			//A: [[0,1,2],[3,0,4],[5,6,0]],
+			//sym: [-1,0,1],
 
-	RAN.config({
-		N: 100,
-		wiener: 0,
-		bins: 50,
-		//A: [[0,1,2],[3,0,4],[5,6,0]],
-		//sym: [-1,0,1],
+			A: [[0,1], [4,0]], 
+			sym: [-1,1],
 
-		A: [[0,1], [4,0]], 
-		sym: [-1,1],
-
-		nyquist: 10,
-		store: {
-			//jump: [],
-			step: []
-		},
-		on: {
-			jump: function (n,fr,to,h,x) {
-				// x.push( mvd.sample() );
-			}
-		}
-	});
-
-	var 
-		intervals = 400,
-		steps = intervals * RAN.Tc/RAN.dt;
-
-	console.log({
-		states: RAN.K,
-		ensemble_size: RAN.N,		
-		process_steps: steps,
-		coherence_interval: intervals, 
-		coherence_time: RAN.Tc,
-		nyquist_step_time: RAN.dt,
-		jump_rates: RAN.A,
-		cumTxPr: RAN.P,
-		state_times: RAN.T,
-		hold_times: RAN.R,
-		initial_pr: RAN.pi,
-		coherence_time: RAN.Tc,
-		initial_activity: RAN.p,
-		wiener_walks: RAN.wiener ? "yes" : "no",
-		sample_time: RAN.dt,
-		time_in_state: RAN.ZU,
-		avg_rate: RAN.lambda		
-	});
-	
-	RAN.start(steps, function () {
-		console.log({			
-			number_of_steps: RAN.steps,
-			number_of_state_jumps: RAN.jumps, 
-			coherence_intervals: n = RAN.t / RAN.Tc, 
-			correlation_computed: RAN.corr(), 
-			correlation_theory: Math.exp(-n),
-			current_time: RAN.T,
-			jumprate_mle: RAN.Amle
+			intervals: 100,
+			nyquist: 10
 		});
+
+	LOG({
+		states: ran.K,
+		ensemble_size: ran.N,		
+		coherence_interval: ran.intervals, 
+		coherence_time: ran.Tc,
+		nyquist_step_time: ran.dt,
+		jump_rates: ran.A,
+		cumTxPr: ran.P,
+		state_times: ran.T,
+		hold_times: ran.R,
+		initial_pr: ran.pi,
+		coherence_time: ran.Tc,
+		initial_activity: ran.p,
+		wiener_walks: ran.wiener ? "yes" : "no",
+		sample_time: ran.dt,
+		time_in_state: ran.ZU,
+		avg_rate: ran.lambda		
 	});
 
+	ran.ranStream.pipe(ran.editStream).pipe(ran,outStream);
+	
 }
 
 function Trace(msg,arg) {
 	ENUM.trace("R>",msg,arg);
 }
 
-//test();
+test();
