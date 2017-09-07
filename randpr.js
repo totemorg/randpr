@@ -13,8 +13,10 @@ var LOG = console.log;
 class RAN {
 	
 	constructor(opts) {
-		Copy({  // configuration
+		Copy({  // default configuration
 
+			// inputs held fixed as process evolves
+			
 			N: 0, 		// ensemble size
 			A: null,	// process parameters: [dims, units, or range]
 				// [KxK] generate K-state process with jump rate MATRIX [from, to]
@@ -41,9 +43,9 @@ class RAN {
 				}
 			},
 
-			store: null,   //< provide a [] to make synchronous event stream; null to use async event stream
+			store: null,   //< [] to make event stream sync; null to keep event stream async
 			
-			// outputs
+			// updated as process evoloves
 
 			// wiener process: [dims, units, or range]
 			WU: null, 		// [N] wiener ensemble
@@ -89,7 +91,7 @@ class RAN {
 	/*
 	Jump from fr state with callback cb(to state,exp time drawn)
 	*/
-	jump (fr, cb) {   // compute to state via fr state
+	jump (fr, cb) {   // compute to-state via fr-state with callback cb(to-state, next holding time)
 		
 		var 
 			K = this.K, R = this.R, P = this.P, A = this.A;
@@ -120,7 +122,7 @@ class RAN {
 	Step process with callback cb( store ) where the cb may add observations to
 	it store.
 	*/
-	step () {  // step process with callback cb(store)
+	step () {  // step process with callback to onStep
 		var 
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,T=this.T,ZU=this.ZU,K=this.K,NU=this.NU,KU=this.KU,
@@ -197,11 +199,9 @@ class RAN {
 	}
 		
 	/*
-	Run process for steps then callback cb(jump store, step store, stats) where
-	the cb may append jump and step observations to its stores, and stats contains 
-	final process metrics.
+	Run process for specified number of steps then callback onStart with computed process metrics.
 	*/
-	start (steps, cb) {	  
+	start (steps) {	  
 		var 
 			exp = Math.exp, 
 			log = Math.log,		
@@ -247,7 +247,7 @@ class RAN {
 			stats.push([ count, act.hist[bin], poisson(count,avgcount) ]);
 		}
 
-		this.onStats(stats);
+		this.onStart(stats);
 	}
 	
 	corr () {  // statistical correlation function
@@ -289,7 +289,7 @@ class RAN {
 			this.ranStream.push(ev);
 	}
 	
-	onStats (stats) {  //< null to disable
+	onStart (stats) { 
 		var n = this.t / this.Tc;
 		this.record(["stats",this.t,this.steps, {
 			hist: stats,
@@ -311,7 +311,7 @@ class RAN {
 		this.record(["step",this.t, this.steps]);
 	}
 
-	pipe(tar, cb) {  // if no cb, stream process events to target stream.  if cb, append transfer events to target list and callback when finished.
+	pipe(tar, cb) {  // if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
 
 		if ( this.store ) {  // in buffering mode
 			var steps = this.intervals * this.dt / this.Tc;
@@ -422,6 +422,7 @@ class RAN {
 				for (var to=0; to<K; to++) 
 					A[fr][to] = floor(rand() * 10) + 1;
 		}
+		
 		else
 		if (K = A.K) { // K-state via random rate generator producing n = K^2 - K unique rates
 			var 
@@ -567,30 +568,31 @@ class RAN {
 		}
 		
 		this.activity = new STATS(this.bins,N);  // initialize ensemble stats
+		this.maxSteps = this.intervals * this.dt / this.Tc;n
 		
-		//this.ingestStream.on("data", this.onIngest);
+		// allocate streams (not used with the store is provided)
 		
-		// allocate streams
-		
-		this.ingestStream = new STREAM.Readable({
+		this.inStream = new STREAM.Readable({
 			objectMode: true
 		});
+		//this.inStream.on("data", this.onIngest);		
 
-		this.ranStream = new STREAM.Readable({
+		this.ranStream = new STREAM.Readable({  // source process events from this stream
 			objectMode: true,
-			read: function () {
-				LOG(ran.steps, ran.dt, ran.Tc, ran.intervals);
+			read: function () {  // kick-start or terminate the pipe
+				//LOG(ran.steps, ran.dt, ran.Tc, ran.intervals);
 				
-				if ( ran.steps * ran.dt/ran.Tc < ran.intervals ) {			
-					//Trace("Buffering 20 steps");
+				if ( ran.steps < ran.maxSteps ) {	// kick start ran.steps * ran.dt/ran.Tc < ran.intervals
+					Trace("Buffering 20 steps");
 					ran.start(20);
 				}
-				else
-					this.push(null);
+				else  // terminate
+					this.push(null);			
+
 			}
 		});
 
-		this.editStream = new STREAM.Transform({
+		this.editStream = new STREAM.Transform({  // process filters events on this stream
 			writableObjectMode: true,
 			readableObjectMode: true,
 			transform: function (ev,en,cb) {
@@ -599,7 +601,7 @@ class RAN {
 			}
 		});
 
-		this.charStream = new STREAM.Transform({
+		this.charStream = new STREAM.Transform({  // process makes events human readable on this stream
 			writableObjectMode: true,
 			transform: function (ev,en,cb) {
 				this.push( JSON.stringify(ev) ); 
