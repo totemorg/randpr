@@ -119,12 +119,24 @@ class RAN {
 
 		if (K == 2)  // get new state for the 2-state process
 			to = (fr + 1) % 2;
-		
+
+		else
+		if (0) 
+			to = (fr + 1) % K;
+				
+		else { 	// get new state by taking a random jump according to cummulative P[fr,to]
+			for (var Pfr = PJ[fr], u=Math.random(), to=0; to < K && Pfr[to] <= u; to++) ;
+			if (to == K) to--;
+		}
+  				
+		/*
 		else do { 	// get new state by taking a random jump according to cummulative P[fr,to]
 			for (var Pfr = PJ[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
 		}
 		while (fr == to);
-		
+		if (to==K) to--;
+		*/
+
 		/*
 		if (to == K) to--;
 		else
@@ -211,9 +223,9 @@ class RAN {
 			PT[i][j] += NA[i][j] / N;
 		});
 		
-		//LOG(s,UA.join(""));
-		//LOG(s, U.join(""));
-		//LOG(s, NA);
+		//LOG(UA.join(""));
+		//LOG(U.join(""));
+		LOG(NA);
 		//LOG(s,PT);
 		//LOG(s, this.gamma[s] / this.gamma[0]);
 		
@@ -342,7 +354,7 @@ class RAN {
 			usevector(T, function (to) {  // diag(A) < 0 as these are balanced jump rates
 				var p = T[to] / Tsum;
 				A[fr][to] = ( p - delta(fr,to) ) / dt;
-				Pmle[fr][to] = delta(fr,to) + A[fr][to] * dt;
+				Pmle[fr][to] = 1 - p;
 			});
 		});
 		
@@ -620,35 +632,37 @@ class RAN {
 				U[n] = -1; // invalid state value forces jump at first step
 			});
 		
-		else  // simulated process
+		else  { // simulated process
 			usevector(PJ, function (fr) {
 				//Poisson( dt, fr, PJ, A );  // initialize cummulative state transition probabilties
 				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
-				
-				if (K == 2) {  // initialize two-state process
-					var Ton=R[0][1], Toff=R[1][0];
-					
-					usevector(U, function (n) {
-						if ( n < Np ) {
-							U0[n] = U[n] = fr = 1;
-							H[n] = R[fr][fr] = expdev(Ton);
-						}
-
-						else {
-							U0[n] = U[n] = fr = 0;
-							H[n] = R[fr][fr] = expdev(Toff);
-						}
-					});
-				}
-
-				else  // initialize K-state process
-					usevector(U, function (n) {
-						ran.jump( fr = floor(rand() * K), function (to,h) {
-							U0[n] = U[n] = to;
-							H[n] = h;	
-						});
-					});
 			});
+		
+			if (K == 2) {  // initialize two-state process
+				var R01=R[0][1], R10=R[1][0];
+				//LOG(R01,expdev(R01), R10,expdev(R10));
+
+				usevector(U, function (n) {
+					if ( n < Np ) {
+						var fr = U0[n] = U[n] = 1;
+						H[n] = R[fr][fr] = expdev(R10);
+					}
+
+					else {
+						var fr = U0[n] = U[n] = 0;
+						H[n] = R[fr][fr] = expdev(R01);
+					}
+				});
+			}
+
+			else  // initialize K-state process
+				usevector(U, function (n) {
+					ran.jump( fr = floor(rand() * K), function (to,h) {
+						U0[n] = U[n] = to;
+						H[n] = h;	
+					});
+				});
+		}
 		
 		//LOG("PT",PT,"PJ",PJ);
 		
@@ -902,8 +916,8 @@ function delta(fr,to) {
 function test() {
 	var 
 		ran = new RAN({
-			N: 10000,
-			batch:100,
+			N: 500,
+			batch:1,
 			//wiener: 0,
 			//bins: 50,
 			
@@ -916,6 +930,8 @@ function test() {
 			//A: [[0,2], [1,0]], 
 			//P: [[1-.1, .1],[.4, 1-.4]],
 			//P: [[1-.5, .5],[.5, 1-.5]],
+			P: [[0.1, 0.9], [0.1, 0.9]],
+			
 			//sym: [-1,1],
 			
 			//P: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
@@ -923,9 +939,9 @@ function test() {
 			//sym: [-1,0,1],
 			//P: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
 			
-			K: 2,
+			//K: 2,
 			dt: 1,
-			nyquist: 40,
+			nyquist: 10,
 			//jumpModel: "gillespie",
 			
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
@@ -934,10 +950,10 @@ function test() {
 			filter: function (str, ev) {
 				switch (ev.at) {
 					case "batch":
-						str.push({
+						/*str.push({
 							at: ev.at, t:ev.t, steps:ev.steps, 
 							stat_corr:ev.stat_corr
-						});
+						});*/
 						break;
 						
 					case "end":
