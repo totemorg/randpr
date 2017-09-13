@@ -54,14 +54,17 @@ class RAN {
 			K: 0, 		// #states >= 1 inferred from supplied A rates
 			U: null,    // [N] ensemble states [0:K-1] at time t
 			U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
-			UA: null, 	// [N} ensemble buffer to compute mle jump rates
+			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
+			UX: null, 	// [N] ensemble to-state tracker
 			H: null, 	// [N] ensemble next jump time [s]
 			R: null, 	// [KxK] from-to holding times  [s]
-			PT: null, 	// [KxK] from-to state tx probabilities mle
+			//PT: null, 	// [KxK] from-to state tx probabilities mle
 			P: null, 	// [KxK] from-to state tx probabilities 
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
 			NU: null, 	// [KxK] from-to samples-in-state probabilities
-			pi: null, 	// [K] initial state probabilities (default = 1/K)
+			HJ: null, 	// [KxK] total time in from-to transition
+			NJ: null, 	// [KxK] number of from-to jumps
+			pi: null, 	// [K] equilib state probabilities 
 
 			// two-state markov parameters
 
@@ -75,11 +78,9 @@ class RAN {
 			lambda: 0,  // average jump rate [jumps/s]
 			Tc: 0,  // coherence time >0 [s] 
 			nyquist: 1, // nyquist oversampling rate
-			intervals: 10, // maximum number of coherence intervals to write streams
-			dt: 1, // sample time [s]
+			steps: 10, // maximum number of coherence steps to write streams
 			t: 0, // step time [s]
 
-			steps: 0, // number of steps 
 			jumps: 0, // number of jumps
 			samples: 0, // number of elements scanned
 			realtime: null // realtime process parameters
@@ -105,63 +106,54 @@ class RAN {
 		}
 	
 		var 
-			K = this.K, R = this.R, PJ = this.PJ, A = this.A;
-
-		switch (this.jumpModel) {  // reseed jump rates if model requires
-			case "gillespie":  // reseed tx probs using Gillespie model
-				Gillespie( fr, PJ[fr], R[fr] );
-				break;
-				
-			case "poisson": // Poisson already seeded
-			default:
-				break;
-		}
+			K = this.K, R = this.R, PJ = this.PJ, A = this.A, HJ = this.HJ, NJ = this.NJ;
 
 		if (K == 2)  // get new state for the 2-state process
-			to = (fr + 1) % 2;
+			var to = (fr + 1) % 2;
 
-		else
-		if (0) 
-			to = (fr + 1) % K;
-				
 		else { 	// get new state by taking a random jump according to cummulative P[fr,to]
+			
+			switch (this.jumpModel) {  // reseed jump rates if model requires
+				case "gillespie":  // reseed tx probs using Gillespie model
+					Gillespie( fr, PJ[fr], R[fr] );
+					break;
+
+				case "poisson": // Poisson already seeded
+				default:			
+					break;
+			}
+			
 			for (var Pfr = PJ[fr], u=Math.random(), to=0; to < K && Pfr[to] <= u; to++) ;
 			if (to == K) to--;
-		}
-  				
-		/*
-		else do { 	// get new state by taking a random jump according to cummulative P[fr,to]
-			for (var Pfr = PJ[fr],u=Math.random(),to=0; to < K && Pfr[to] <= u; to++) ;
-		}
-		while (fr == to);
-		if (to==K) to--;
-		*/
 
-		/*
-		if (to == K) to--;
-		else
-		if (to) {
-			//if (Math.random() > 0.5 ) to--;
-		}*/
-		
+		} 
+  				
 		this.jumps++;  // increase jump counter
+		
 		cb( to, R[fr][fr] = expdev( R[fr][to] ) );  // draw and store new exptime
+		
+		HJ[fr][to] += R[fr][fr];  // total holding time in from-to jump
+		NJ[fr][to] ++;  // total number of from-to jumps
 	}
 	
 	end() {  // save metrics when process terminates
 		
 		var 
+			R = this.R,
 			P = this.P,
-			Perr = this.Perr,
-			Pmle = this.Pmle,
+			Rerr = this.Rerr,
+			Rmle = this.Rmle,
 			Tc = this.Tc = this.corrTime(),
 			A = this.A,
-			lambda = this.lambda = avgrate(A),
+			lambda = this.lambda = avgRate(A),
 			K = this.K,
 			lambdaTc = this.lambdaTc = Tc*lambda / ( (K==2) ? 2.3 : 1 );
-		
-		usematrix(Perr, function (i,j,Perr) {
-			Perr[i][j] = Pmle[i][j] - P[i][j]
+
+		usematrix(Rerr, function (fr,to,Rerr) {
+			if ( P[fr][to] )
+				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+			else
+				Rerr[fr][to] = 0;
 		});
 		
 		this.onEnd();
@@ -171,13 +163,18 @@ class RAN {
 		var 
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,PT=this.PT,NU=this.NU,K=this.K,
-			UA=this.UA,NA=this.NA,
-			t = this.t, s = this.steps, dt = this.dt, N=this.N;
+			UA=this.UA,NA=this.NA,UX=this.UX,
+			t = this.t, N = this.N;
 		
-		usevector(UA, U);
+		this.samples += N;
 		
-		this.samples += N; 
-		this.gamma[s] = this.corr();
+		if (t > 1)
+			this.gamma[t] = this.corr() / this.gamma0;
+		
+		else {
+			this.gamma0 = this.corr();
+			this.gamma[t] = 1;
+		}
 
 		if (evs) // realtime mode
 			evs.each(function (n,ev) {
@@ -199,12 +196,13 @@ class RAN {
 		else  // simulation mode
 			usevector(U, function (n) {
 				if ( t > H[n] ) {   // holding time exceeded so jump to new state
-					var fr = U[n];
-					ran.jump( fr, function (to, h) {  // get new to-state and its holding time
+					var fr = U[n], to = UX[n];
+					ran.jump( fr, function (tox, h) {  // get new to-state and its holding time
 						ran.onJump(n,fr,to,h); 	// callback with jump info
 
 						U[ n ] = to;  		// set state
 						H[ n ] = t + h;    // advance to next-jump time 
+						UX[n] = tox; 	 // future tx
 					});
 				}
 			});		
@@ -213,6 +211,7 @@ class RAN {
 			NU[ U0[n] ][ U[n] ]++; 
 		});
 
+		/*
 		usematrix(NA, 0);
 		usematrix(NA, function (i,j) {
 			for (var n=0; n<N; n++) 
@@ -221,13 +220,13 @@ class RAN {
 
 		usematrix(PT, function (i,j) {
 			PT[i][j] += NA[i][j] / N;
-		});
+		}); */
 		
 		//LOG(UA.join(""));
 		//LOG(U.join(""));
-		LOG(NA);
-		//LOG(s,PT);
-		//LOG(s, this.gamma[s] / this.gamma[0]);
+		//LOG(NA);
+		//LOG(PT);
+		//LOG(this.gamma[t]);
 		
 		if ( this.wiener ) {  // step wiener process
 			var 
@@ -235,7 +234,7 @@ class RAN {
 				floor = Math.floor, sqrt = Math.sqrt, 
 				nrv = this.NRV.sample, WU = this.WU, WQ = this.WQ;
 			
-			for (var t=this.steps,n=0; n<N; n++) {				
+			for (var t=this.t,n=0; n<N; n++) {				
 				for (var sum=WQ[n], j=1, J=floor(M*t); j<=J; j++) sum += nrv()[0];
 				WU[n] = sum / sqrt(M);
 				WQ[n] = sum;
@@ -244,7 +243,7 @@ class RAN {
 		
 		//this.activity.add( N - NU[0] );
 		
-		this.t += this.dt; this.steps++; this.ints += this.dint;
+		this.t ++;
 		this.onStep();
 	}
 		
@@ -282,13 +281,12 @@ class RAN {
 			evfeed( this.events, this.dt, function (evs) {  // ingest a batch of events in next dt interval 
 				ran.step(evs);
 			});
-			this.runSteps = this.steps;
-			//this.end();
+			this.T = this.t;
 		}
 		
 		else
 			for (var s=0; s<this.batch; s++) {
-				if ( this.steps < this.runSteps ) // simulation mode
+				if ( this.t < this.T ) // simulation mode
 					this.step(); 
 		
 				else
@@ -322,31 +320,27 @@ class RAN {
 				cor += sym[fr] * sym[to] * p_frto;
 			});
 		});
-		/*
-		for (var fr=0; fr<K; fr++) 
-			for (var to=0, Zfr=NU[fr]; to<K; to++) 	{
-				//LOG(this.steps,fr,to,sym[fr],sym[to],Zfr[to],N);
-				cor += sym[fr] * sym[to] * Zfr[to] / N;
-			}
-		*/
 
-		//LOG(this.steps, cor);
 		return cor;
 	}
 
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
 		var abs = Math.abs;
-		for (var n=1, N = this.steps, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]);
+		for (var n=1, N = this.t, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]);
 		
-		Tc *= this.dt / this.gamma[0];
 		//LOG("tc calc",N, Tc, this.gamma);
 		return Tc;
 	}
 	
 	MLEs ( ) {    // MLE jump rates and tx probs
 		var 
-			K = this.K, PT = this.PT, dt = this.dt , ts = this.ts, A = this.A, Pmle = this.Pmle;
+			K = this.K, PT = this.PT, dt = this.dt , ts = this.ts, A = this.A, Rmle = this.Rmle, HJ = this.HJ, NJ = this.NJ;
 		
+		usematrix(Rmle, function (fr,to) { 
+			Rmle[fr][to] = (fr == to) ? 0 : HJ[fr][to] / NJ[fr][to];
+		});
+		
+		/*
 		usevector(PT, function (fr) {
 			var T=PT[fr],Tsum=0;
 			for ( var to=0; to<K; to++) Tsum += T[to];
@@ -354,11 +348,11 @@ class RAN {
 			usevector(T, function (to) {  // diag(A) < 0 as these are balanced jump rates
 				var p = T[to] / Tsum;
 				A[fr][to] = ( p - delta(fr,to) ) / dt;
-				Pmle[fr][to] = 1 - p;
+				Rmle[fr][to] = 1 - p;
 			});
-		});
+		});*/
 		
-		//LOG("mle A",A,"P",Pmle,dt,ts);
+		//LOG("mle A",A,"P",Rmle,dt,ts);
 	}
 
 	record (ev) {  // record metrics to RAN stream
@@ -371,48 +365,73 @@ class RAN {
 	
 	onBatch (stats) { 
 		this.record({
-			at:"batch",t:this.t,steps:this.steps,ints:this.ints,
+			at:"batch",t:this.t,
 			hist: stats,
 			state_jumps: this.jumps, 
-			stat_corr: this.gamma[this.steps-1] / this.gamma[0], 
-			exp_corr: Math.exp(-this.ints),
+			stat_corr: this.gamma[this.t-1], 
+			exp_corr: Math.exp(-this.t),
 			tx_probs: this.PT
 		});
 	}
 
 	onJump (idx,from,to,hold) {  // null to disable
 		this.record({
-			at:"jump",t:this.t,steps:this.steps,ints:this.ints,
+			at:"jump",t:this.t,
 			idx: idx, to:to, from:from, hold:hold
 		});
 	}
 
 	onStep () {		// null to disable
 		this.record({
-			at:"step",t:this.t,steps:this.steps,ints:this.ints
+			at:"step",t:this.t,
 		});
 	}
 
 	onEnd() {
-		//LOG("Tc from gamma", this.Tc);
-		//LOG("mle A", this.A); 
 		this.record({
-			at:"end",t:this.t,steps:this.steps,ints:this.ints,
+			at:"end",t:this.t,
 			corr_time: this.Tc, 
-			mle_jump_rates: this.A, 
+			jump_rates: this.A, 
 			avg_rate: this.lambda,
 			lambdaTc_ratio: this.lambdaTc,
-			end_corr: this.gamma[this.steps-1] / this.gamma[0],
-			mle_txprs: this.Pmle,
-			mle_txpr_errs: this.Perr,
-			coherence_intervals: this.t / this.Tc
+			end_corr: this.gamma[this.t-1],
+			mle_holding_times: this.Rmle,
+			mle_holding_errs: this.Rerr,
+			coherence_intervals: this.t / this.Tc,
+			corr: this.gamma
 		});
 	}
 
+	onConfig() {
+		var 
+			lambda = avgRate(this.A),
+			Tc = 1/lambda;
+		
+		this.record({
+			at: "config", 
+			t: this.t,
+			states: this.K,
+			ensemble_size: this.N,		
+			coherence_interval: this.steps, 
+			sample_time: this.ts,
+			jump_rates: this.A,
+			cumTxPr: this.PJ,
+			TxPrs: this.P,
+			hold_times: this.R,
+			eq_pr: this.pi,
+			mean_state_times:  this.Rdiag,
+			initial_activity: this.p,
+			wiener_walks: this.wiener ? "yes" : "no",
+			avg_jump_rate: lambda,
+			exp_coherence_time: Tc,
+			run_steps: this.T
+		});
+	}
+	
 	pipe(tar, cb) {  // if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
 
 		if ( this.store ) {  // in buffering mode
-			while (this.steps < this.runSteps) this.start( );
+			while (this.t < this.T) this.start( );
 			this.end();
 			
 			if (cb)
@@ -454,12 +473,9 @@ class RAN {
 	
 		var 
 			ran = this,
-			N = this.N, A = this.A,
+			N = this.N, 
 			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
-		// Define A (jump rate matrix), lambda (average jump rate), K (number of states) and 
-		// dt (sampling time) for specified configuration
-		
 		if ( this.events ) { // realtime process
 			var
 				K = this.K,
@@ -473,21 +489,17 @@ class RAN {
 		}
 		
 		else
-		if ( this.P ) {  // K-state process via dt,tx probs,nyquist
+		if ( this.P ) {  // K-state process via from-to transition probs
 			var 
-				P = this.P,
+				P = this.P,  // from-to transition probs
 				K = this.K = P.length,
-				dt = this.dt,
-				ts = this.ts = dt / this.nyquist,
-				A = this.A = matrix(K, K, function (fr,to,A) {
-						A[fr][to] = ( P[fr][to] - delta(fr,to) ) / dt;	
-					}),
-				fs = 1 / ts,
-				fb = fs / this.nyquist,
-				Tc = this.Tc = 1/fb,
-				lambda = this.lambda = 2.3/Tc;
-					
-			//LOG("init A",A,dt);
+				R = this.R = meanRecurTimes(P),  // from-to mean recurrence times
+				A = this.A = balanceRate( matrix(K,K, function (fr,to, A) {  // from-to equiv jump rates for ref only
+					A[fr][to] = (fr == to) ? 0 : 1 / R[fr][to];
+				}) ),
+				pi = this.pi = vector(K, function (k,pi) {
+					pi[k] = 1/R[k][k];
+				});
 		}
 		
 		else
@@ -498,7 +510,7 @@ class RAN {
 				q = 1 - p,
 				K = this.K = 2,
 				A = this.A = [[-alpha, alpha], [beta, -beta]],
-				lambda = this.lambda = avgrate(A),
+				lambda = this.lambda = avgRate(A),
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
 				ts = this.ts = 1/fs, // sample time
@@ -515,7 +527,7 @@ class RAN {
 				alpha = this.alpha = 2.3 * q / Tc, 
 				beta = this.beta = 2.3 * p / Tc,
 				A = this.A = [[-alpha, alpha], [beta, -beta]],
-				lambda = this.lambda = avgrate(A),
+				lambda = this.lambda = avgRate(A),
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
 				ts = this.ts = 1/fs, // sample time
@@ -530,10 +542,10 @@ class RAN {
 					P[fr][to] = rand();
 				});
 			
-			usevector(P, function (k) {
-				var Pk = P[k], sum = sumvector(Pk);
-				usevector(Pk, function (i) {
-					Pk[i] /= sum;
+			usevector(P, function (fr) {
+				var Pk = P[fr], sum = sumvector(Pk);
+				usevector(Pk, function (to) {
+					Pk[to] /= sum;
 				});
 			});
 			
@@ -547,14 +559,12 @@ class RAN {
 				fb = fs / this.nyquist,
 				Tc = this.Tc = 1/fb,
 				lambda = this.lambda = 2.3/Tc;	
-			
-			//LOG(P,A,dt);
 		}
 		
 		else { // K-state process from jump rates and nyquist
 			var
 				K = this.K = A.length,
-				lambda = this.lambda = avgrate(A),
+				lambda = this.lambda = avgRate(A),
 				Tc = this.Tc = 2.3 / lambda, // coherence time
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
@@ -562,16 +572,6 @@ class RAN {
 				dt = this.dt = ts * this.nyquist;
 		}
 		
-		// compute (recompute) sampling rate and coherence time
-
-		var 
-			dint = this.dint = dt; //dt / Tc;  // coherence intervals per step
-		
-		//LOG(n,K,lambda,Tc,this.nyquist,dt);
-		
-		if (this.nyquist < 1)
-			Trace("Woa there cowboy - your sampling rate is sub Nyquist");
-
 		if ( !this.sym ) {  // default state symbols
 			var sym = this.sym = vector(K);
 			
@@ -595,35 +595,33 @@ class RAN {
 		// allocate the ensemble
 		
 		var 
-			UA = this.UA = vector(N),
-			NA = this.NA = matrix(K,K,0),			
-			R = this.R = matrix(K,K, Tc ? function (fr,to,R) {
+			//UA = this.UA = vector(N),
+			//NA = this.NA = matrix(K,K,0),	
+			//PT = this.PT = matrix(K,K,0), 
+			/* R = this.R = matrix(K,K, Tc ? function (fr,to,R) {
 					R[fr][to] = delta(fr,to) ? 0 : 1 / A[fr][to];
-				} : 0 ),
+				} : 0 ), 
 			P = this.P = matrix(K,K, function (fr,to,P) {
 				P[fr][to] = delta(fr,to) + A[fr][to] * dt;
-			}),
+			}), */
+			HJ = this.HJ = matrix(K,K,0),
+			NJ = this.NJ = matrix(K,K,0),
 			PJ = this.PJ = matrix(K,K,P),
-			PT = this.PT = matrix(K,K,0), 
-			Pmle = this.Pmle = matrix(K,K),
-			Perr = this.Perr = matrix(K,K),
+			Rmle = this.Rmle = matrix(K,K),
+			Rerr = this.Rerr = matrix(K,K),
 			p = 1/K,
-			pi = this.pi = vector(K,p),
 			Np = p * N,
 			NU = this.NU = matrix(K,K,function (fr,to,NU) {
 					NU[fr][to] = delta(fr,to) ? Np : 0
 				}),
 			H = this.H = vector(N),
 			U = this.U = vector(N),
+			UX = this.UX = vector(N),
 			U0 = this.U0 = vector(N),
 			WU = this.WU = this.wiener ? vector(N) : [],
 			WQ = this.WQ = this.wiener ? vector(N) : [];
 		
-		//balanceJR(A);  // enforce detailed balance on jump rates
-		
-		//LOG("config",pi0,N0,NU);
-		
-		this.t = this.steps = this.ints = this.jumps = this.samples = 0;  // initialize process counters
+		this.t = this.jumps = this.samples = 0;  // initialize process counters
 
 		if ( this.events )   // realtime process
 			usevector(U, function(n) {   
@@ -634,22 +632,22 @@ class RAN {
 		
 		else  { // simulated process
 			usevector(PJ, function (fr) {
-				//Poisson( dt, fr, PJ, A );  // initialize cummulative state transition probabilties
 				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
 			});
 		
 			if (K == 2) {  // initialize two-state process
 				var R01=R[0][1], R10=R[1][0];
-				//LOG(R01,expdev(R01), R10,expdev(R10));
 
 				usevector(U, function (n) {
 					if ( n < Np ) {
 						var fr = U0[n] = U[n] = 1;
+						UX[n] = 0;
 						H[n] = R[fr][fr] = expdev(R10);
 					}
 
 					else {
 						var fr = U0[n] = U[n] = 0;
+						UX[n] = 1;
 						H[n] = R[fr][fr] = expdev(R01);
 					}
 				});
@@ -657,14 +655,14 @@ class RAN {
 
 			else  // initialize K-state process
 				usevector(U, function (n) {
-					ran.jump( fr = floor(rand() * K), function (to,h) {
+					var fr = floor(rand() * K);
+					ran.jump( fr, function (to,h) {
 						U0[n] = U[n] = to;
+						UX[n] = to;
 						H[n] = h;	
 					});
-				});
+				}); 
 		}
-		
-		//LOG("PT",PT,"PJ",PJ);
 		
 		if (this.wiener) {  //  initialilze wiener processes
 			this.NRV = RAN.MVN( [0], [[1]] );
@@ -672,18 +670,18 @@ class RAN {
 		}
 
 		this.activity = new STATS(this.bins,N);  // initialize ensemble stats
-		this.runSteps = this.intervals; //floor( this.intervals * this.Tc / this.dt );  // number of steps over specified interval
+		this.T = this.steps;  // number of steps over specified interval
 		
-		this.gamma = vector(this.runSteps, 0);  // statistical autocovariance ensemble averaged
+		this.gamma = vector(this.T, 0);  // statistical autocovariance ensemble averaged
 		
-		// allocate streams (not used when a store is provided)
+		// allocate streams (unused when this.store provided)
 		
 		this.ranStream = new STREAM.Readable({  // source process events from this stream
 			objectMode: true,
 			read: function () {  // kick-start or terminate the pipe
-				LOG("pipe kick",ran.steps, ran.dt, ran.Tc, ran.intervals);
+				LOG("pipe kick",ran.t, ran.dt, ran.Tc, ran.steps);
 				
-				if ( ran.steps < ran.runSteps ) 	// kick start ran.steps
+				if ( ran.t < ran.runSteps ) 	// kick-start 
 					ran.start( );
 				
 				else  { // terminate
@@ -710,25 +708,8 @@ class RAN {
 			}
 		});
 
-		Trace({  // display config info
-			states: this.K,
-			ensemble_size: this.N,		
-			coherence_interval: this.intervals, 
-			coherence_time: this.Tc,
-			sample_time: this.ts,
-			jump_rates: this.A,
-			cumTxPr: this.PJ,
-			TxPrs: this.P,
-			hold_times: this.R,
-			initial_pr: this.pi,
-			coherence_time: this.Tc,
-			initial_activity: this.p,
-			wiener_walks: this.wiener ? "yes" : "no",
-			process_time: this.dt,
-			state_samples: this.NU,
-			avg_rate: this.lambda,
-			run_steps: this.runSteps
-		});
+		this.onConfig();
+
 	}
 	
 }
@@ -736,7 +717,7 @@ class RAN {
 // share gauss multivariate and MLE for mixed gauss ensembles
 RAN.MVN = require("multivariate-normal").default; 
 RAN.MLE = require("expectation-maximization"); 
-			
+
 module.exports = RAN;
 
 function STATS(bins,N) {
@@ -772,7 +753,7 @@ function expdev(mean) {
 	return -mean * Math.log(Math.random());
 }
 
-function avgrate(A) {  // A not necessarily balanced
+function avgRate(A) {  // A not necessarily balanced
 
 	for (var fr=0,lambda=0,K=A.length; fr<K; fr++)
 		for (var to=0,Afr=A[fr]; to<K; to++)
@@ -883,18 +864,20 @@ function range (min,max) { // generates a range
 	return rtn;
 }	
 
-function balanceJR(A) {   // enforce global balance on jump rates
+function balanceRate(A) {   // enforce global balance on jump rates
 	usevector(A, function (k) {
 		var Ak = A[k];
 		Ak[k] = -sumvector(Ak);
 	});
+	return A;
 }
 
-function balancePR(P) {  // enforce global balance on probs
+function balanceProb(P) {  // enforce global balance on probs
 	usevector(P, function (k) {
 		var Pk = P[k];
 		Pk[k] = sumvector(Pk);
 	});
+	return P;
 }			
 
 function sumvector(A) {
@@ -926,11 +909,15 @@ function test() {
 
 			//A: {dt: 0.04599999999999999, n: 2},  // Nq=20
 			//A: {dt: 0.09199999999999998, n: 2},  // Nq=10
-			
 			//A: [[0,2], [1,0]], 
+			
 			//P: [[1-.1, .1],[.4, 1-.4]],
 			//P: [[1-.5, .5],[.5, 1-.5]],
 			P: [[0.1, 0.9], [0.1, 0.9]],
+			//P: [[0.1, 0.9], [0.9, 0.1]],
+			//P: [[0,1],[1,0]],
+			//P:  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
+			//P: [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]],
 			
 			//sym: [-1,1],
 			
@@ -939,26 +926,25 @@ function test() {
 			//sym: [-1,0,1],
 			//P: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
 			
-			//K: 2,
-			dt: 1,
-			nyquist: 10,
-			//jumpModel: "gillespie",
-			
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
 			//sym: [-2,-1,1,2],
 			
 			filter: function (str, ev) {
 				switch (ev.at) {
+					case "config":
+						str.push(ev);
+						break;
+						
 					case "batch":
 						/*str.push({
-							at: ev.at, t:ev.t, steps:ev.steps, 
+							at: ev.at, t:ev.t, 
 							stat_corr:ev.stat_corr
 						});*/
 						break;
 						
 					case "end":
 						/*str.push({
-							at: ev.at, t:ev.t, ints:ev.ints, 
+							at: ev.at, t:ev.t,
 							corr_time: ev.corr_time, 
 							mle_jump_rates: ev.mle_jump_rates, 
 							mle_tx_prs: ev.mle_tx_prs
@@ -978,7 +964,7 @@ function test() {
 			nyquist: 10,
 			*/
 			
-			intervals: 500
+			steps: 50
 		});
 	
 	if (false) 
@@ -995,6 +981,49 @@ function test() {
 
 function Trace(msg,arg) {
 	ENUM.trace("R>",msg,arg);
+}
+
+var 
+	MATH = require("mathjs");
+
+function meanRecurTimes(P) {
+//LOG( meanRecurTimes(  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]] ));  // regular and ergodic
+//LOG( meanRecurTimes(  [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]] ));   // not regular but ergodic (and has absorbing states)
+	
+	var 
+		M = MATH,
+		scope = {
+			//P: M.matrix( [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]] ),
+			//K: 3
+			//P: M.matrix( [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]] ),
+			//K: 5,
+			P: M.matrix(P),
+			K: P.length
+		};
+
+
+	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PP=P[k,k]; ww= -PU*inv(PP-eye(K-1));", scope);
+
+	scope.w = M.matrix([1].concat(scope.ww._data[0]));
+
+	M.eval("w = w / sum(w); w = [w]; W = w[ ones(K) , 1:K]; Z = inv(eye(K) - P + W); H = zeros(K,K); ", scope);
+
+	var 
+		K = scope.K,
+		H = scope.H,
+		Z = scope.Z,
+		W = scope.W,
+		h = H._data,
+		z = Z._data,
+		w = W._data[1];
+
+	for (var fr=0;fr<K; fr++) 
+		for (var to=0; to<K; to++) 
+			h[ fr ][ to ] = ( fr == to ) ? 1 / w[ to ] : ( z[ to ][ to ] - z[ fr ][ to ] ) / w[ to ];
+
+	//LOG("mean recur times",h);
+	
+	return h;
 }
 
 test();
