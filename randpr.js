@@ -31,11 +31,14 @@ class RAN {
 			wiener: 0,  // number of additional random walks at each wiener step
 			reversible: false,  // tailor A to make process reversible	
 			bins: 0,  // number of bins for ensemble activity histogram
-			jumpModel: "poisson",   // typically not used
+			jumpModel: "poisson",   // typically not changed
 
-			filter: function (str,ev) {  //< streaming filter to modify an event destined for the event stream
-				switch ( ev[0] ) {
+			filter: function (str,ev) {  //< streaming filter modifies events destined for the sinking stream
+				switch ( ev.at ) {
 					case "jump":
+					case "config":
+					case "end":
+					case "batch":
 						str.push( ev );
 						break;
 				}
@@ -54,10 +57,10 @@ class RAN {
 			K: 0, 		// #states >= 1 inferred from supplied A rates
 			U: null,    // [N] ensemble states [0:K-1] at time t
 			U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
-			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
 			UX: null, 	// [N] ensemble to-state tracker
 			H: null, 	// [N] ensemble next jump time [s]
 			R: null, 	// [KxK] from-to holding times  [s]
+			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
 			//PT: null, 	// [KxK] from-to state tx probabilities mle
 			P: null, 	// [KxK] from-to state tx probabilities 
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
@@ -166,15 +169,7 @@ class RAN {
 			UA=this.UA,NA=this.NA,UX=this.UX,
 			t = this.t, N = this.N;
 		
-		this.samples += N;
-		
-		if (t > 1)
-			this.gamma[t] = this.corr() / this.gamma0;
-		
-		else {
-			this.gamma0 = this.corr();
-			this.gamma[t] = 1;
-		}
+		this.gamma[t] = this.corr();
 
 		if (evs) // realtime mode
 			evs.each(function (n,ev) {
@@ -243,8 +238,8 @@ class RAN {
 		
 		//this.activity.add( N - NU[0] );
 		
-		this.t ++;
 		this.onStep();
+		this.t ++;
 	}
 		
 	start ( ) {	  // advance process this.batch steps with callback to onBatch with batch metrics
@@ -311,17 +306,23 @@ class RAN {
 	}
 	
 	corr ( ) {  // statistical correlation function
+		
+		this.samples += this.N;
+				
 		var 
-			K = this.K, sym = this.sym, cor = 0, p_frto, NU = this.NU, N = this.samples;
+			K = this.K, sym = this.sym, cor = 0, p_frto, NU = this.NU, NS = this.samples;
 
 		usevector(sym, function (fr) {
 			usevector(sym, function (to) {
-				p_frto = NU[fr][to] / N;
+				p_frto = NU[fr][to] / NS;
 				cor += sym[fr] * sym[to] * p_frto;
 			});
 		});
 
-		return cor;
+		if ( this.t <= 1 )
+			this.gamma0 = cor;
+
+		return cor / this.gamma0;
 	}
 
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
@@ -383,7 +384,7 @@ class RAN {
 
 	onStep () {		// null to disable
 		this.record({
-			at:"step",t:this.t,
+			at:"step", t:this.t, gamma:this.gamma[this.t]
 		});
 	}
 
@@ -394,11 +395,11 @@ class RAN {
 			jump_rates: this.A, 
 			avg_rate: this.lambda,
 			lambdaTc_ratio: this.lambdaTc,
-			end_corr: this.gamma[this.t-1],
+			end_corr: this.gamma[this.T-1],
+			lag0_corr: this.gamma0,
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
-			coherence_intervals: this.t / this.Tc,
-			corr: this.gamma
+			coherence_intervals: this.T / this.Tc
 		});
 	}
 
@@ -828,36 +829,6 @@ function cumulative( P ) {
 	}
 }
 
-/*
-function Poisson( dt, fr , P, A) {  
-	var K = P.length;
-	for (var to=0,Pfr=P[fr],Afr=A[fr]; to<K; to++) 
-		Pfr[to] =  (to == fr) ? 0 : Afr[to]*dt;  // disallows fr-fr jump
-
-	for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
-	
-	var P0 = Pfr[K-1];
-	
-	if ( P0 ) 
-		for (var to=0; to<K; to++) Pfr[to] /= P0;
-	else
-		for (var to=0; to<K; to++) Pfr[to] = 1;
-		
-}
-*/
-
-/*
-function Gillespie( fr, P, R ) {  // cumulative transition probs P
-	var K = P.length;
-	
-	for (var to=0,Pfr=P[fr],Rfr=R[fr],R0=Rfr[fr]; to<K; to++) 
-		Pfr[to] = (to == fr) ? 0 : Rfr[to] / R0;
-	
-	for (var to=1; to<K; to++) Pfr[to] += Pfr[to-1];
-	for (var to=0, P0=Pfr[K-1]; to<K; to++) Pfr[to] /= P0;
-}
-*/
-
 function range (min,max) { // generates a range
 	var rtn = new Array(max-min+1);
 	for (var n=min,m=0,M=rtn.length; m<=M; m++) rtn[m] = n += 1;
@@ -885,7 +856,7 @@ function sumvector(A) {
 	return sum;
 }
 	
-function txpr(P,A,dt) {  // transition probs from jump rates
+function txpr(P,A,dt) {  // transition probs from jump rates - legacy
 	var K = A.length;
 	for (var fr=0 ; fr<K; fr++)
 		for (var to=0; to<K; to++)
@@ -917,7 +888,7 @@ function test() {
 			//P: [[0.1, 0.9], [0.9, 0.1]],
 			//P: [[0,1],[1,0]],
 			//P:  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
-			//P: [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]],
+			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],
 			
 			//sym: [-1,1],
 			
@@ -1026,4 +997,4 @@ function meanRecurTimes(P) {
 	return h;
 }
 
-test();
+//test();
