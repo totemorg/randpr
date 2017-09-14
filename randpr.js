@@ -1,14 +1,23 @@
 'use strict';
+/**
+@requires stream
+@requires mathjs
+@requires enum
+**/
 
-var 														
-	ENUM = require("../enum"), 			// Totem enumerator
-	STREAM = require("stream");			// nodejs data streams
+var			// nodejs modules
+	STREAM = require("stream");			// data streams
+
+var 		// external modules
+	MATH = require("mathjs");
+
+var 		// totem modules					
+	ENUM = require("../enum"); 			// enumerator
 	
 var															// shortcuts
 	Copy = ENUM.copy,
-	Each = ENUM.each;
-
-var LOG = console.log;
+	Each = ENUM.each,
+	Log = console.log;
 
 class RAN {
 	
@@ -63,6 +72,7 @@ class RAN {
 			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
 			//PT: null, 	// [KxK] from-to state tx probabilities mle
 			P: null, 	// [KxK] from-to state tx probabilities 
+			Pmle: null, 	// [KxK] mle tx probabilities
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
 			NU: null, 	// [KxK] from-to samples-in-state probabilities
 			HJ: null, 	// [KxK] total time in from-to transition
@@ -179,7 +189,7 @@ class RAN {
 					t = ev.t,
 					to = ev.u;
 				
-				//LOG(n,fr,to,t,H[n]);
+				//Log(n,fr,to,t,H[n]);
 				
 				if ( fr != to ) {
 					ran.onJump(n,fr,to,0); 	// callback with jump info
@@ -217,11 +227,11 @@ class RAN {
 			PT[i][j] += NA[i][j] / N;
 		}); */
 		
-		//LOG(UA.join(""));
-		//LOG(U.join(""));
-		//LOG(NA);
-		//LOG(PT);
-		//LOG(this.gamma[t]);
+		//Log(UA.join(""));
+		//Log(U.join(""));
+		//Log(NA);
+		//Log(PT);
+		//Log(this.gamma[t]);
 		
 		if ( this.wiener ) {  // step wiener process
 			var 
@@ -272,21 +282,26 @@ class RAN {
 		}
 
 		if ( this.events ) { // realtime mode
-			LOG("FEED events");
+			Log("FEED events");
 			evfeed( this.events, this.dt, function (evs) {  // ingest a batch of events in next dt interval 
 				ran.step(evs);
 			});
 			this.T = this.t;
 		}
 		
-		else
+		else {
 			for (var s=0; s<this.batch; s++) {
-				if ( this.t < this.T ) // simulation mode
+				if ( this.t < this.T ) { // simulation mode
 					this.step(); 
-		
+					if (this.t == 1) this.onBatch(stats);
+				}
+				
 				else
 					this.end();
 			}
+			
+			this.onBatch(stats);
+		}
 		
 		this.MLEs();  // update estimated jump rates
 		
@@ -301,8 +316,6 @@ class RAN {
 			var count = act.count[bin];
 			stats.push([ count, act.hist[bin], poisson(count,N0) ]);
 		}
-
-		this.onBatch(stats);
 	}
 	
 	corr ( ) {  // statistical correlation function
@@ -310,16 +323,16 @@ class RAN {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, sym = this.sym, cor = 0, p_frto, NU = this.NU, NS = this.samples;
+			K = this.K, sym = this.sym, cor = 0, Pmle = this.Pmle, p, NU = this.NU, NS = this.samples;
 
 		usevector(sym, function (fr) {
 			usevector(sym, function (to) {
-				p_frto = NU[fr][to] / NS;
-				cor += sym[fr] * sym[to] * p_frto;
+				p = Pmle[fr][to] = NU[fr][to] / NS;
+				cor += sym[fr] * sym[to] * p;
 			});
 		});
 
-		if ( this.t <= 1 )
+		if ( this.t <= 1 ) 
 			this.gamma0 = cor;
 
 		return cor / this.gamma0;
@@ -329,7 +342,7 @@ class RAN {
 		var abs = Math.abs;
 		for (var n=1, N = this.t, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]);
 		
-		//LOG("tc calc",N, Tc, this.gamma);
+		//Log("tc calc",N, Tc, this.gamma);
 		return Tc;
 	}
 	
@@ -353,7 +366,7 @@ class RAN {
 			});
 		});*/
 		
-		//LOG("mle A",A,"P",Rmle,dt,ts);
+		//Log("mle A",A,"P",Rmle,dt,ts);
 	}
 
 	record (ev) {  // record metrics to RAN stream
@@ -365,16 +378,24 @@ class RAN {
 	}
 	
 	onBatch (stats) { 
+		var t = this.t - 1;
 		this.record({
-			at:"batch",t:this.t,
+			at:"batch",t:t,
 			hist: stats,
 			state_jumps: this.jumps, 
-			stat_corr: this.gamma[this.t-1], 
-			exp_corr: Math.exp(-this.t),
+			stat_corr: this.gamma[t], 
+			exp_corr: Math.exp(-t),
 			tx_probs: this.PT
 		});
 	}
 
+	onError( msg ) {
+		Trace(msg);
+		this.record({ 
+			at: "error", t: this.t, error: msg
+		});
+	}
+	
 	onJump (idx,from,to,hold) {  // null to disable
 		this.record({
 			at:"jump",t:this.t,
@@ -399,7 +420,8 @@ class RAN {
 			lag0_corr: this.gamma0,
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
-			coherence_intervals: this.T / this.Tc
+			coherence_intervals: this.T / this.Tc,
+			mle_tx_prs: this.Pmle
 		});
 	}
 
@@ -590,7 +612,7 @@ class RAN {
 					sym[k++] = -a;
 				}
 			
-			LOG("symbols",sym);
+			Log("symbols",sym);
 		}
 
 		// allocate the ensemble
@@ -610,6 +632,7 @@ class RAN {
 			PJ = this.PJ = matrix(K,K,P),
 			Rmle = this.Rmle = matrix(K,K),
 			Rerr = this.Rerr = matrix(K,K),
+			Pmle = this.Pmle = matrix(K,K),
 			p = 1/K,
 			Np = p * N,
 			NU = this.NU = matrix(K,K,function (fr,to,NU) {
@@ -631,7 +654,8 @@ class RAN {
 				U[n] = -1; // invalid state value forces jump at first step
 			});
 		
-		else  { // simulated process
+		else
+		if (R) { // simulated ergodic process with valid holding times
 			usevector(PJ, function (fr) {
 				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
 			});
@@ -665,6 +689,9 @@ class RAN {
 				}); 
 		}
 		
+		else  // non-ergodic process so disable
+			this.steps = 0;
+		
 		if (this.wiener) {  //  initialilze wiener processes
 			this.NRV = RAN.MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
@@ -680,7 +707,7 @@ class RAN {
 		this.ranStream = new STREAM.Readable({  // source process events from this stream
 			objectMode: true,
 			read: function () {  // kick-start or terminate the pipe
-				LOG("pipe kick",ran.t, ran.dt, ran.Tc, ran.steps);
+				Log("pipe kick",ran.t, ran.dt, ran.Tc, ran.steps);
 				
 				if ( ran.t < ran.runSteps ) 	// kick-start 
 					ran.start( );
@@ -884,7 +911,9 @@ function test() {
 			
 			//P: [[1-.1, .1],[.4, 1-.4]],
 			//P: [[1-.5, .5],[.5, 1-.5]],
-			P: [[0.1, 0.9], [0.1, 0.9]],
+			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2
+			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8
 			//P: [[0.1, 0.9], [0.9, 0.1]],
 			//P: [[0,1],[1,0]],
 			//P:  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
@@ -944,7 +973,7 @@ function test() {
 	else
 		ran.pipe( [], function (evs) {
 			evs.each(function (n,ev) {
-				LOG(ev);
+				Log(ev);
 			});
 		});
 			
@@ -954,47 +983,71 @@ function Trace(msg,arg) {
 	ENUM.trace("R>",msg,arg);
 }
 
-var 
-	MATH = require("mathjs");
-
 function meanRecurTimes(P) {
-//LOG( meanRecurTimes(  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]] ));  // regular and ergodic
-//LOG( meanRecurTimes(  [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]] ));   // not regular but ergodic (and has absorbing states)
+//Log( meanRecurTimes(  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]] ));  // regular and ergodic
+//Log( meanRecurTimes(  [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]] ));   // not regular but ergodic (and has absorbing states)
 	
 	var 
 		M = MATH,
 		scope = {
-			//P: M.matrix( [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]] ),
-			//K: 3
-			//P: M.matrix( [[0,1,0,0,0], [.25,0,.75,0,0], [0,.5,0,.5,0], [0,0,.75,0,.25], [0,0,0,1,0]] ),
-			//K: 5,
 			P: M.matrix(P),
 			K: P.length
 		};
 
-
-	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PP=P[k,k]; ww= -PU*inv(PP-eye(K-1));", scope);
-
-	scope.w = M.matrix([1].concat(scope.ww._data[0]));
-
-	M.eval("w = w / sum(w); w = [w]; W = w[ ones(K) , 1:K]; Z = inv(eye(K) - P + W); H = zeros(K,K); ", scope);
-
-	var 
-		K = scope.K,
-		H = scope.H,
-		Z = scope.Z,
-		W = scope.W,
-		h = H._data,
-		z = Z._data,
-		w = W._data[1];
-
-	for (var fr=0;fr<K; fr++) 
-		for (var to=0; to<K; to++) 
-			h[ fr ][ to ] = ( fr == to ) ? 1 / w[ to ] : ( z[ to ][ to ] - z[ fr ][ to ] ) / w[ to ];
-
-	//LOG("mean recur times",h);
+	/*
+	If the process is/were Regular, we could interrate (i.e. compute some power of the from-to transition matrix P) to determine the equlibrium 
+	probs w, and therefore its associated matrix W = [w ; w; ... ].  However, in general, P is not Regular.  We require, however, that the P be at 
+	least Ergodic (w or w/o absorbing states) and, thus, it must possess mean recurrence times H.  So while the computed H must have nontrivial
+	values for an absorbing P, there is (of course, and by definition) no guarantee that all states will be hit, and thus there	is no guarantee that 
+	the MLE H will match the computed H at transitions that are never hit.  So, in the general ergodic case, the equib probs w must be determined
+	by examining the left-nullspace for ( I - P ) whose inverse does not exists.  There is, however, an alternative way to compute the w since
+	sum(w) = 1 by definition.  Thus we decomple ( I - P ) as follows:
 	
-	return h;
+			w P = w
+			[ 1, w^ ] [ [P0 PU] ; [PL P^] ] = [1, w^]
+			
+	leaving simultaneous equations:
+	
+			P0 + w^ PL = 1
+			PU + w^ P^ = w^
+			
+	the last of which is solved for a w^, then w = renormalized( [1,w^ ] ) such that sum(w) = 1.
+	
+	This technique fails, however, when det(P^ - I ) vanishes; such P exists.
+	*/	
+	
+	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PP=P[k,k]; Q = PP-eye(K-1); Qdet = det(Q); ", scope);
+	
+	if ( scope.Qdet < 1e-3 && K>2 ) {
+		onError("Proposed P is not ergodic, thus no *unique* equlibrium exists.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
+		return null;
+	}
+		
+	else {
+
+		M.eval("ww= -PU*inv(Q);", scope);
+
+		scope.w = M.matrix([1].concat(scope.ww._data[0]));
+
+		M.eval("w = w / sum(w); w = [w]; W = w[ ones(K) , 1:K]; Z = inv(eye(K) - P + W); H = zeros(K,K); ", scope);
+
+		var 
+			K = scope.K,
+			H = scope.H,
+			Z = scope.Z,
+			W = scope.W,
+			h = H._data,
+			z = Z._data,
+			w = W._data[1];
+
+		for (var fr=0;fr<K; fr++) 
+			for (var to=0; to<K; to++) 
+				h[ fr ][ to ] = ( fr == to ) ? 1 / w[ to ] : ( z[ to ][ to ] - z[ fr ][ to ] ) / w[ to ];
+
+		//Log("mean recur times",h);
+
+		return h;
+	}
 }
 
 //test();
