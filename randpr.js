@@ -72,7 +72,7 @@ class RAN {
 			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
 			//PT: null, 	// [KxK] from-to state tx probabilities mle
 			P: null, 	// [KxK] from-to state tx probabilities 
-			Pmle: null, 	// [KxK] mle tx probabilities
+			Pcor: null, 	// [KxK] mle tx probabilities
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
 			NU: null, 	// [KxK] from-to samples-in-state probabilities
 			HJ: null, 	// [KxK] total time in from-to transition
@@ -156,12 +156,15 @@ class RAN {
 			P = this.P,
 			Rerr = this.Rerr,
 			Rmle = this.Rmle,
+			pi = this.pi,
 			Tc = this.Tc = this.corrTime(),
 			A = this.A,
 			lambda = this.lambda = avgRate(A),
 			K = this.K,
 			lambdaTc = this.lambdaTc = Tc*lambda / ( (K==2) ? 2.3 : 1 );
 
+		this.Pmle = txprEst(R, pi);
+		
 		usematrix(Rerr, function (fr,to,Rerr) {
 			if ( P[fr][to] )
 				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
@@ -323,11 +326,11 @@ class RAN {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, sym = this.sym, cor = 0, Pmle = this.Pmle, p, NU = this.NU, NS = this.samples;
+			K = this.K, sym = this.sym, cor = 0, Pcor = this.Pcor, p, NU = this.NU, NS = this.samples;
 
 		usevector(sym, function (fr) {
 			usevector(sym, function (to) {
-				p = Pmle[fr][to] = NU[fr][to] / NS;
+				p = Pcor[fr][to] = NU[fr][to] / NS;
 				cor += sym[fr] * sym[to] * p;
 			});
 		});
@@ -421,7 +424,7 @@ class RAN {
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
 			coherence_intervals: this.T / this.Tc,
-			mle_tx_prs: this.Pmle
+			mle_tx_prs: this.Pcor
 		});
 	}
 
@@ -618,10 +621,11 @@ class RAN {
 		// allocate the ensemble
 		
 		var 
-			//UA = this.UA = vector(N),
-			//NA = this.NA = matrix(K,K,0),	
-			//PT = this.PT = matrix(K,K,0), 
-			/* R = this.R = matrix(K,K, Tc ? function (fr,to,R) {
+			/*
+			UA = this.UA = vector(N),
+			NA = this.NA = matrix(K,K,0),	
+			PT = this.PT = matrix(K,K,0), 
+			R = this.R = matrix(K,K, Tc ? function (fr,to,R) {
 					R[fr][to] = delta(fr,to) ? 0 : 1 / A[fr][to];
 				} : 0 ), 
 			P = this.P = matrix(K,K, function (fr,to,P) {
@@ -632,7 +636,7 @@ class RAN {
 			PJ = this.PJ = matrix(K,K,P),
 			Rmle = this.Rmle = matrix(K,K),
 			Rerr = this.Rerr = matrix(K,K),
-			Pmle = this.Pmle = matrix(K,K),
+			Pcor = this.Pcor = matrix(K,K),
 			p = 1/K,
 			Np = p * N,
 			NU = this.NU = matrix(K,K,function (fr,to,NU) {
@@ -914,7 +918,7 @@ function test() {
 			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2
 			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8
-			//P: [[0.1, 0.9], [0.9, 0.1]],
+			P: [[0.1, 0.9], [0.9, 0.1]],
 			//P: [[0,1],[1,0]],
 			//P:  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],
@@ -1001,22 +1005,23 @@ function meanRecurTimes(P) {
 	values for an absorbing P, there is (of course, and by definition) no guarantee that all states will be hit, and thus there	is no guarantee that 
 	the MLE H will match the computed H at transitions that are never hit.  So, in the general ergodic case, the equib probs w must be determined
 	by examining the left-nullspace for ( I - P ) whose inverse does not exists.  There is, however, an alternative way to compute the w since
-	sum(w) = 1 by definition.  Thus we decomple ( I - P ) as follows:
+	sum(w) = 1 by definition.  Thus we decompose ( I - P ) as follows:
 	
-			w P = w
-			[ 1, w^ ] [ [P0 PU] ; [PL P^] ] = [1, w^]
+			w * P = w
+			[ 1, wQ ] [ [P0 PU] ; [PL PQ] ] = [1, wQ]
 			
-	leaving simultaneous equations:
+	leaving 2 simultaneous equations:
 	
-			P0 + w^ PL = 1
-			PU + w^ P^ = w^
+			P0 + wQ * PL = 1
+			PU + wQ * PQ = wQ
 			
-	the last of which is solved for a w^, then w = renormalized( [1,w^ ] ) such that sum(w) = 1.
+	the last of which is solved for a wQ, thence w = renormalized( [1,wQ ] ) such that sum(w) = 1.
 	
-	This technique fails, however, when det(P^ - I ) vanishes; such P exists.
+	This technique fails, however, when det(P^ - I ) vanishes, that is, when w is not unique; we test for 
+	such non-ergodic P by testing the det( PQ - I ).
 	*/	
 	
-	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PP=P[k,k]; Q = PP-eye(K-1); Qdet = det(Q); ", scope);
+	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PQ=P[k,k]; Q = PQ - eye(K-1); Qdet = det(Q); ", scope);
 	
 	if ( scope.Qdet < 1e-3 && K>2 ) {
 		onError("Proposed P is not ergodic, thus no *unique* equlibrium exists.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
@@ -1024,10 +1029,9 @@ function meanRecurTimes(P) {
 	}
 		
 	else {
+		M.eval("wQ= -PU*inv(Q);", scope);
 
-		M.eval("ww= -PU*inv(Q);", scope);
-
-		scope.w = M.matrix([1].concat(scope.ww._data[0]));
+		scope.w = M.matrix([1].concat(scope.wQ._data[0]));
 
 		M.eval("w = w / sum(w); w = [w]; W = w[ ones(K) , 1:K]; Z = inv(eye(K) - P + W); H = zeros(K,K); ", scope);
 
@@ -1050,4 +1054,20 @@ function meanRecurTimes(P) {
 	}
 }
 
-//test();
+function txprEst(h,w) {
+	var 
+		M = MATH,
+		scope = {
+			H: M.matrix(h),
+			W: M.matrix(w),
+			K: w.length
+		};
+	
+	Log(scope);
+	M.eval("C=ones(K,K); D=diag(W); I=eye(K); W=[W]; W=W[ones(K),:]; Zinv = inv( ( C - H*(I - W) ) * D ); P = I + Zinv + W;", scope);
+	Log(scope.H._data,scope.Zinv._data, scope.P._data);
+	
+	return scope.P._data;
+}
+	
+test();
