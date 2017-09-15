@@ -69,8 +69,8 @@ class RAN {
 			UX: null, 	// [N] ensemble to-state tracker
 			H: null, 	// [N] ensemble next jump time [s]
 			R: null, 	// [KxK] from-to holding times  [s]
-			//UA: null, 	// [N] ensemble buffer to compute mle jump rates
-			//PT: null, 	// [KxK] from-to state tx probabilities mle
+			UA: null, 	// [N] ensemble buffer to compute mle jump rates
+			PT: null, 	// [KxK] from-to state tx probabilities mle
 			P: null, 	// [KxK] from-to state tx probabilities 
 			Pcor: null, 	// [KxK] mle tx probabilities
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
@@ -106,15 +106,15 @@ class RAN {
 	jump (fr, cb) {   // compute to-state via fr-state with callback cb(to-state, next holding time)
 		
 		function Gillespie( fr, P, R ) {  // cumulative transition probs P given holding times R
-			var R0 = R[fr];
-			usevector(P, function (k) {
-				P[k] = delta(fr,k) ? 0 : R[k] / R0;
+			var R0 = R[fr], K = P.length;
+			usevector(P, function (to) {
+				P[to] = delta(fr,k) ? 0 : R[to] / R0;
 			});
 
 			cumulative(P);	
-			var P0 = P[P.length-1];
-			usevector(P, function (k) {
-				P[k] /= P0;
+			var P0 = P[K-1];
+			usevector(P, function (to) {
+				P[to] /= P0;
 			});
 		}
 	
@@ -156,6 +156,11 @@ class RAN {
 			P = this.P,
 			Rerr = this.Rerr,
 			Rmle = this.Rmle,
+			NA = this.NA,
+			NU = this.NU,
+			NS = this.samples,
+			PT = this.PT,
+			t = this.t,
 			pi = this.pi,
 			Tc = this.Tc = this.corrTime(),
 			A = this.A,
@@ -164,10 +169,29 @@ class RAN {
 			lambdaTc = this.lambdaTc = Tc*lambda / ( (K==2) ? 2.3 : 1 );
 
 		if (R) {
+			/*
 			var Pmle = this.Pmle = balanceProbs( matrix(K,K, function (fr,to,P) {
 				P[fr][to] = delta(fr,to) ? 0 : 1/R[fr][to];
 			}));
-
+			*/
+			/*
+			var Pmle = this.Pmle = matrix(K, K, function (fr,to,P) {
+				P[fr][to] = ( NA[fr][to] / NS ) / pi[fr];
+			});*/
+			var Pmle = this.Pmle = matrix(K,K, function (fr,to,P) {
+				P[fr][to] = PT[fr][to] / t;
+			});
+			
+			/*usevector(Pmle, function (fr) {
+				var Nsum = sumvector(NA[fr]);
+				usevector( Pmle , function (to) {
+					Pmle[fr][to] = NA[fr][to] / Nsum;
+				});
+			});*/
+					
+			//balanceProbs(Pmle);
+			//Log(NA,NS, pi,Pmle);
+			
 			usematrix(Rerr, function (fr,to,Rerr) {
 			if ( P[fr][to] )
 				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
@@ -192,6 +216,9 @@ class RAN {
 		
 		this.gamma[t] = this.corr();
 
+		usevector(UA,U);  // hold for NA adjustments
+		usematrix(NA,0);
+		
 		if (evs) // realtime mode
 			evs.each(function (n,ev) {
 				var 
@@ -223,20 +250,20 @@ class RAN {
 				}
 			});		
 
-		usevector(U, function (n) {   // adjust stat covar counter
+		usevector(U, function (n) {   // adjust stat covariance from-to counters (aka fundemental matrix) for computing correlations
 			NU[ U0[n] ][ U[n] ]++; 
 		});
 
-		/*
-		usematrix(NA, 0);
-		usematrix(NA, function (i,j) {
-			for (var n=0; n<N; n++) 
-				if ( UA[n] == i && U[n] == j ) NA[i][j]++;
+		usevector(U, function (n) {  // adjust 1-step joint tx counters for computing joint (not conditional) 1-step tx probs
+			NA[ UA[n] ][ U[n] ]++;
 		});
 
-		usematrix(PT, function (i,j) {
-			PT[i][j] += NA[i][j] / N;
-		}); */
+		usevector(NA, function (fr) {  // compute mle for 1-step tx probs
+			var sum = sumvector(NA[fr]);
+			usevector(NA, function (to) {
+				PT[fr][to] += NA[fr][to] / sum;
+			});
+		}); 
 		
 		//Log(UA.join(""));
 		//Log(U.join(""));
@@ -432,7 +459,8 @@ class RAN {
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
 			coherence_intervals: this.T / this.Tc,
-			mle_tx_prs: this.Pmle
+			mle_tx_prs: this.Pmle,
+			tx_counts: this.NA
 		});
 	}
 
@@ -453,9 +481,9 @@ class RAN {
 			TxPrs: this.P,
 			hold_times: this.R,
 			eq_pr: this.pi,
-			mean_state_times:  this.Rdiag,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
+			tx_prs: this.P,
 			avg_jump_rate: lambda,
 			exp_coherence_time: Tc,
 			run_steps: this.T
@@ -633,10 +661,10 @@ class RAN {
 		// allocate the ensemble
 		
 		var 
-			/*
 			UA = this.UA = vector(N),
 			NA = this.NA = matrix(K,K,0),	
 			PT = this.PT = matrix(K,K,0), 
+			/*
 			R = this.R = matrix(K,K, Tc ? function (fr,to,R) {
 					R[fr][to] = delta(fr,to) ? 0 : 1 / A[fr][to];
 				} : 0 ), 
@@ -649,7 +677,7 @@ class RAN {
 			Rmle = this.Rmle = matrix(K,K),
 			Rerr = this.Rerr = matrix(K,K),
 			Pcor = this.Pcor = matrix(K,K),
-			p = 1/K,
+			p = pi[0],
 			Np = p * N,
 			NU = this.NU = matrix(K,K,function (fr,to,NU) {
 					NU[fr][to] = delta(fr,to) ? Np : 0
@@ -794,7 +822,7 @@ STATS.prototype.norm = function () {
 }
 
 function expdev(mean) {
-	return -mean * Math.log(Math.random());
+	return -40*mean * Math.log(Math.random());
 }
 
 function avgRate(A) {  // A not necessarily balanced
@@ -918,15 +946,26 @@ function test() {
 			//A: {dt: 0.09199999999999998, n: 2},  // Nq=10
 			//A: [[0,2], [1,0]], 
 			
-			//P: [[1-.1, .1],[.4, 1-.4]],
-			//P: [[1-.5, .5],[.5, 1-.5]],
-			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
-			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2
-			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8
+			// these have same eqprs [.5, .5]
+			//P: [[.6, .4],[.4, .6]],
+			//P: [[0.83177, 0.16822], [0.17152, 0.82848]],
+			//P: [[.5, .5],[.5, .5]],
 			//P: [[0.1, 0.9], [0.9, 0.1]],
-			//P: [[0,1],[1,0]],
-			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
-			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],
+			
+			// textbook exs
+			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2  eqpr [.5, .333, .1666]
+			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8  no eqprs
+			
+			// these have different eqprs
+			//P: [[0.1, 0.9], [0.1, 0.9]],
+			//P: [[0.1, 0.9], [0.3, 0.7]],
+			P: [[0.1, 0.9], [0.4, 0.6]],
+			
+			// textbook exs 
+			//P: [[0,1],[1,0]],  // pg433 ex16  absorbing eqpr [.5, .5]
+			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps); eqpr [.4, .2, .4]
+			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  absorbing eqpr [.0625, .25, .375]
 			
 			//sym: [-1,1],
 			
@@ -973,7 +1012,7 @@ function test() {
 			nyquist: 10,
 			*/
 			
-			steps: 500
+			steps: 200
 		});
 	
 	if (false) 
