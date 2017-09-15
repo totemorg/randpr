@@ -159,18 +159,26 @@ class RAN {
 			pi = this.pi,
 			Tc = this.Tc = this.corrTime(),
 			A = this.A,
-			lambda = this.lambda = avgRate(A),
+			lambda = this.lambda = R ? avgRate(A) : 0,
 			K = this.K,
 			lambdaTc = this.lambdaTc = Tc*lambda / ( (K==2) ? 2.3 : 1 );
 
-		this.Pmle = txprEst(R, pi);
-		
-		usematrix(Rerr, function (fr,to,Rerr) {
+		if (R) {
+			var Pmle = this.Pmle = balanceProbs( matrix(K,K, function (fr,to,P) {
+				P[fr][to] = delta(fr,to) ? 0 : 1/R[fr][to];
+			}));
+
+			usematrix(Rerr, function (fr,to,Rerr) {
 			if ( P[fr][to] )
 				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
 			else
 				Rerr[fr][to] = 0;
 		});
+		}
+		
+		else {
+			this.Pmle = this.Rerr = null;
+		}
 		
 		this.onEnd();
 	}
@@ -424,13 +432,13 @@ class RAN {
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
 			coherence_intervals: this.T / this.Tc,
-			mle_tx_prs: this.Pcor
+			mle_tx_prs: this.Pmle
 		});
 	}
 
 	onConfig() {
 		var 
-			lambda = avgRate(this.A),
+			lambda = this.R ? avgRate(this.A) : 0,
 			Tc = 1/lambda;
 		
 		this.record({
@@ -519,13 +527,17 @@ class RAN {
 			var 
 				P = this.P,  // from-to transition probs
 				K = this.K = P.length,
-				R = this.R = meanRecurTimes(P),  // from-to mean recurrence times
-				A = this.A = balanceRate( matrix(K,K, function (fr,to, A) {  // from-to equiv jump rates for ref only
+				R = this.R = meanRecurTimes(P);  // from-to mean recurrence times
+			
+			if ( R ) {
+				A = this.A = balanceRates( matrix(K,K, function (fr,to, A) {  // from-to equiv jump rates for ref only
 					A[fr][to] = (fr == to) ? 0 : 1 / R[fr][to];
 				}) ),
 				pi = this.pi = vector(K, function (k,pi) {
 					pi[k] = 1/R[k][k];
 				});
+			}
+
 		}
 		
 		else
@@ -866,7 +878,7 @@ function range (min,max) { // generates a range
 	return rtn;
 }	
 
-function balanceRate(A) {   // enforce global balance on jump rates
+function balanceRates(A) {   // enforce global balance on jump rates
 	usevector(A, function (k) {
 		var Ak = A[k];
 		Ak[k] = -sumvector(Ak);
@@ -874,10 +886,10 @@ function balanceRate(A) {   // enforce global balance on jump rates
 	return A;
 }
 
-function balanceProb(P) {  // enforce global balance on probs
+function balanceProbs(P) {  // enforce global balance on probs
 	usevector(P, function (k) {
 		var Pk = P[k];
-		Pk[k] = sumvector(Pk);
+		Pk[k] = 1 - sumvector(Pk);
 	});
 	return P;
 }			
@@ -887,13 +899,6 @@ function sumvector(A) {
 	return sum;
 }
 	
-function txpr(P,A,dt) {  // transition probs from jump rates - legacy
-	var K = A.length;
-	for (var fr=0 ; fr<K; fr++)
-		for (var to=0; to<K; to++)
-			P[fr][to] = delta(fr,to) + A[fr][to] *dt;
-}
-
 function delta(fr,to) {
 	return (fr==to) ? 1 : 0;
 }
@@ -918,9 +923,9 @@ function test() {
 			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2
 			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8
-			P: [[0.1, 0.9], [0.9, 0.1]],
+			//P: [[0.1, 0.9], [0.9, 0.1]],
 			//P: [[0,1],[1,0]],
-			//P:  [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
+			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],
 			
 			//sym: [-1,1],
@@ -968,7 +973,7 @@ function test() {
 			nyquist: 10,
 			*/
 			
-			steps: 50
+			steps: 500
 		});
 	
 	if (false) 
@@ -1023,9 +1028,11 @@ function meanRecurTimes(P) {
 	
 	M.eval("k=2:K; P0=P[1,1]; PL=P[k,1]; PU=P[1,k]; PQ=P[k,k]; Q = PQ - eye(K-1); Qdet = det(Q); ", scope);
 	
-	if ( scope.Qdet < 1e-3 && K>2 ) {
-		onError("Proposed P is not ergodic, thus no *unique* equlibrium exists.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
-		return null;
+	//Log("det",scope.Qdet);
+	
+	if ( scope.Qdet < 1e-3 && scope.K>2 ) {
+		Trace("Proposed P is not ergodic, thus *unique* eq pr do not exist.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
+		return null;		
 	}
 		
 	else {
@@ -1052,22 +1059,6 @@ function meanRecurTimes(P) {
 
 		return h;
 	}
-}
-
-function txprEst(h,w) {
-	var 
-		M = MATH,
-		scope = {
-			H: M.matrix(h),
-			W: M.matrix(w),
-			K: w.length
-		};
-	
-	Log(scope);
-	M.eval("C=ones(K,K); D=diag(W); I=eye(K); W=[W]; W=W[ones(K),:]; Zinv = inv( ( C - H*(I - W) ) * D ); P = I + Zinv + W;", scope);
-	Log(scope.H._data,scope.Zinv._data, scope.P._data);
-	
-	return scope.P._data;
 }
 	
 test();
