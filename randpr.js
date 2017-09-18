@@ -432,7 +432,7 @@ class RAN {
 
 	onConfig() {
 		var 
-			lambda = this.R ? avgRate(this.A) : 0,
+			lambda = avgRate(this.A),
 			Tc = 1/lambda;
 		
 		this.record({
@@ -524,18 +524,12 @@ class RAN {
 				R = this.R = meanRecurTimes(P),  // from-to mean recurrence times
 				nyquist = this.nyquist,
 				ts = this.ts = 1/nyquist,
-				A = this.A = R 
-					? balanceRates( matrix(K,K, function (fr, to, A) {  // ctmode jump rates
-							A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
-						}) )
-					: matrix(K,K,0),
-				
-				pi = this.pi = R 
-					? vector(K, function (k,pi) {  // eq state probs
+				A = this.A = balanceRates( matrix(K,K, function (fr, to, A) {  // ctmode jump rates
+						A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
+					}) ),
+				pi = this.pi = vector(K, function (k,pi) {  // eq state probs
 						pi[k] = 1/R[k][k];
-					})
-					: vector(K,0),
-				
+					}),
 				ab = this.ab = firstAbsorbTimes(P);
 		}
 
@@ -663,8 +657,7 @@ class RAN {
 				U[n] = -1; // invalid state value forces jump at first step
 			});
 		
-		else
-		if (R) { // simulated ergodic process with valid holding times
+		else { // simulated process
 			usevector(PJ, function (fr) {
 				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
 			});
@@ -693,9 +686,6 @@ class RAN {
 				}); 
 		}
 		
-		else  // non-ergodic process so disable
-			this.steps = 0;
-		
 		if (this.wiener) {  //  initialilze wiener processes
 			this.NRV = RAN.MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
@@ -705,9 +695,9 @@ class RAN {
 		this.T = this.steps;  // number of steps over specified interval
 		
 		this.gamma = vector(this.T, 0);  // statistical autocovariance ensemble averaged
-		
+
 		// allocate streams (unused when this.store provided)
-		
+
 		this.ranStream = new STREAM.Readable({  // source process events from this stream
 			objectMode: true,
 			read: function () {  // kick-start or terminate the pipe
@@ -976,7 +966,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	
 	if ( scope.Adet < 1e-3 && K>2 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
-		return null;
+		return matrix(K,K,0);
 	}
 		
 	else {
@@ -999,7 +989,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	}
 }
 
-switch (3) {   //======== unit tests
+switch (0) {   //======== unit tests
 	case 1:
 		Log( meanRecurTimes(  
 			// [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
@@ -1016,7 +1006,7 @@ switch (3) {   //======== unit tests
 		
 	case 3:
 		var ran = new RAN({
-			N: 500,
+			N: 50,
 			batch:1,
 			//wiener: 0,
 			//bins: 50,
@@ -1046,7 +1036,7 @@ switch (3) {   //======== unit tests
 			//P: [[0.1, 0.9], [0.4, 0.6]],
 
 			// textbook exs 
-			//P: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular but ergodic so --> eqpr [.5, .5]
+			//P: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
 			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
 			P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
@@ -1086,8 +1076,8 @@ switch (3) {   //======== unit tests
 			nyquist: 10,
 			*/
 
-			nyquist: 10,
-			steps: 20
+			nyquist: 1,
+			steps: 200
 		}, 
 
 		function (ran) {
