@@ -39,7 +39,7 @@ class RAN {
 			sym: null, 	// [K] state symbols (default = 0:K-1)
 			wiener: 0,  // number of additional random walks at each wiener step
 			reversible: false,  // tailor A to make process reversible	
-			bins: 0,  // number of bins for ensemble activity histogram
+			statBins: 0,  // number of statBins for ensemble activity histogram
 			jumpModel: "poisson",   // typically "poisson" but "gillespie" allowed
 
 			filter: function (str,ev) {  //< streaming filter modifies events destined for the sinking stream
@@ -108,7 +108,7 @@ class RAN {
 		if (cb) cb(this);
 	}
 	
-	jump (fr, dt, cb) {   // callback cb(from-state, to-state, next holding time) *if* process can jump
+	jump (fr, held, cb) {   // callback cb(from-state, to-state, next holding time) *if* process can jump
 		
 		function Gillespie( fr, P, R ) {  // compute cumulative tx probs P given holding times R
 			var R0 = R[fr], K = P.length;
@@ -144,34 +144,19 @@ class RAN {
 		if ( fr != to ) {  // take jump
 			this.jumps++;  // increase jump counter
 
-			cb( fr, to, R[fr][fr] = this.ctmode ? expdev( 1/A[fr][to] ) : 0 );  // draw and store exptime (0) in ct (dt) time
+			cb( fr, to, R[fr][fr] = this.ctmode ? expdev( 1/A[fr][to] ) : 0 );  // draw and store holding time (0) in ctime (dtime) mode
 
-			HJ[fr][to] += dt; //R[fr][fr];  // total holding time in from-to jump
+			HJ[fr][to] += held; //R[fr][fr];  // total holding time in from-to jump
 			NJ[fr][to] ++;  // total number of from-to jumps
 		}
 	}
 	
 	end() {  // save metrics when process terminates
-		var
-			Tc = this.Tc = this.corrTime(),
-			A = this.A,
-			lambda = this.lambda = avgRate(A),
-			K = this.K,
-			NA = this.NA,
-			Pmle = this.Pmle,
-			lambdaTc = this.lambdaTc = Tc*lambda;
+		
+		this.onBatch();
 
-		/*
-		usematrix(Pmle, function (fr,to) {
-			Pmle[fr][to] /= t;
-		}); */
-		usevector(NA, function (fr) {
-			sumvector(NA[fr], function (sum, N) {
-				usevector(Pmle[fr], function (to, P) {
-					P[to] = N[to] / sum;
-				});
-			});
-		});
+		var
+			Tc = this.Tc = this.corrTime();
 		
 		this.onEnd();
 	}
@@ -180,25 +165,26 @@ class RAN {
 		var 
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,Pmle=this.Pmle,NU=this.NU,K=this.K,
-			UA=this.UA,NA=this.NA,
+			UA=this.UA, NA=this.NA, HJ = this.HJ, NJ = this.NJ,
 			t = this.t, s = this.s, N = this.N;
 		
 		this.gamma[s] = this.corr();
 
-		usevector(UA,U);  // hold for NA count
+		usevector(UA,U);  // hold for NA counters
 		
 		if (evs) // realtime mode
-			evs.each(function (n,ev) {
+			evs.each(function (n,ev) {   // assume time-ordered events
 				var 
 					n = ev.n,
 					fr = U[n],
 					t = ev.t,
 					to = ev.u;
 				
-				//Log(n,fr,to,t,H[n]);
-				
-				if ( fr != to ) {
+				if ( fr != to  || !t ) {
 					ran.onJump(n,fr,to,0); 	// callback with jump info
+					HJ[fr][to] += t - H[n]; 	// total holding time in from-to jump
+					NJ[fr][to] ++;  	// total number of from-to jumps
+					
 					U[ n ] = to;  		// set state
 					H[ n ] = t;			// hold jump time
 				}
@@ -206,18 +192,18 @@ class RAN {
 
 		else  // simulation mode
 			usevector(U, function (n) {
-				var hold = t - H[n];
-				if ( hold > 0 ) {   // holding time exceeded so *consider* jump to new state
-					ran.jump( U[n], hold, function (fr, to, hold) {  // get new to-state and its holding time  to->tox
+				var held = t - H[n];
+				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
+					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						ran.onJump(n,fr,to,hold); 	// callback with jump info
 
 						U[ n ] = to;  			// set state
-						H[ n ] = t + hold;    // advance to next jump time (hold = 0 in discrete time mode)
+						H[ n ] = t + hold;    // advance to next jump time: hold = 0 (exptime) in discrete (continious) time mode
 					});
 				}
 			});	
 
-		usevector(U, function (n) {   // adjust stat covariance from-to counters (aka fundemental matrix) for computing correlations
+		usevector(U, function (n) {   // adjust stat covariance from-to counters for computing correlations
 			NU[ U0[n] ][ U[n] ]++; 
 		});
 
@@ -225,15 +211,6 @@ class RAN {
 			NA[ UA[n] ][ U[n] ]++;
 		});
 
-		/*
-		usevector(NA, function (fr) {  // compute mle for 1-step tx probs
-			sumvector(NA[fr], function (sum,N) {
-				usevector(N, function (to) {
-					Pmle[fr][to] += N[to] / sum;
-				});
-			});
-		});  */
-		
 		//Log(UA.join(""));
 		//Log(U.join(""));
 		//Log(NA);
@@ -257,14 +234,14 @@ class RAN {
 		this.t+= this.ts; this.s++;
 	}
 		
-	start ( ) {	  // advance process this.batch steps with callback to onBatch with batch metrics
+	start ( ) {	  // advance process this.batch steps with batch() and end() callbacks
 		var 
 			ran = this,
 			exp = Math.exp, 
 			log = Math.log;
 
-		function evfeed(evs, dt, cb) {
-			var n =0, t=0, evbuf = [], evStream = new STREAM.Readable({
+		function evfeed(evs, maxevbuf, ts, cb) {
+			var n = 0, t = 0, evbuf = [], evStream = new STREAM.Readable({
 				objectMode: true,
 				read: function () {
 					this.push( evs[n++] || null );
@@ -272,8 +249,8 @@ class RAN {
 			});
 			
 			for ( var ev = evStream.read(); ev; ev = evStream.read() ) {
-				if (ev.t - t > dt ) {
-					cb( evbuf ); evbuf = [ev]; t += dt;
+				if (ev.t - t > ts  || evbuf.length == maxevbuf) {
+					t = cb( evbuf ); evbuf = [ev];
 				}
 				else
 					evbuf.push (ev );
@@ -286,29 +263,25 @@ class RAN {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		if ( this.events ) { // realtime mode
-			Log("FEED events");
-			evfeed( this.events, this.dt, function (evs) {  // ingest a batch of events in next dt interval 
-				ran.step(evs);
-			});
-			this.T = this.t;
-		}
-		
-		else {
-			for (var s=0; s<this.batch; s++) {
-				if ( this.s < this.steps ) { // simulation mode
-					this.step(); 
-					if (this.s == 1) this.onBatch(stats);  // kludge
-				}
-				
-				else
-					this.end();
+		if ( this.events )  // realtime mode
+			if ( this.steps ) {
+				evfeed( this.events, this.N, this.ts, function (evs) {  // ingest a batch of events in over next sampe time  
+					Log("Feed events",evs.length);
+					ran.step(evs);
+					return ran.t;
+				});
+				this.end();
+				Log(this.HJ, this.NJ, this.Rmle);
+				this.steps = 0;
 			}
-			
-			this.onBatch(stats);
-		}
+			else
+				Log("Feed emptied");
 		
-		this.MLEs();  // update estimated jump rates etc
+		else {  // simulation mode
+			this.step(); 
+			this.onBatch();
+			for (var s=1; s<this.batch; s++) this.step(); 
+		}
 		
 		var	// update activity stats
 			N0 = this.N * this.pi[0],  // average number in 0-state
@@ -317,7 +290,7 @@ class RAN {
 
 		act.norm();
 
-		for (var bin=0, bins=act.bins; bin<bins; bin++) {
+		for (var bin=0, statBins=act.statBins; bin<statBins; bin++) {
 			var count = act.count[bin];
 			stats.push([ count, act.hist[bin], poisson(count,N0) ]);
 		}
@@ -352,28 +325,6 @@ class RAN {
 		return Tc;
 	}
 	
-	MLEs ( ) {    // MLE jump rates and tx probs
-		var 
-			K = this.K,
-			HJ = this.HJ, 
-			NJ = this.NJ,
-			R = this.R,
-			P = this.P,
-			nyquist = this.nyquist,
-			Rerr = this.Rerr,
-			Rmle = this.Rmle;
-		
-		if (R) {
-			usematrix(Rmle, function (fr,to) { 
-				Rmle[fr][to] = (fr == to) ? 0 : nyquist * HJ[fr][to] / NJ[fr][to];
-			});
-			
-			usematrix(Rerr, function (fr,to,Rerr) {
-				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
-			});
-		}
-	}
-
 	record (ev) {  // record metrics to RAN stream
 		if (this.store) 
 			this.filter(this.store, ev);
@@ -382,10 +333,46 @@ class RAN {
 			this.ranStream.push(ev);
 	}
 	
-	onBatch (stats) { 
+	onBatch () {    // MLE jump rates and tx probs
+		var 
+			K = this.K,
+			HJ = this.HJ, 
+			NJ = this.NJ,
+			R = this.R,
+			P = this.P,
+			nyquist = this.nyquist,
+			Amle = this.Amle,
+			Rerr = this.Rerr,
+			Rmle = this.Rmle,
+			NA = this.NA,
+			Pmle = this.Pmle;
+		
+		usematrix(Rmle, function (fr,to) { 
+			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * HJ[fr][to] / NJ[fr][to];
+			Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
+		});
+		
+		this.lambda = avgRate(this.Amle);
+
+		usevector(NA, function (fr) {
+			sumvector(NA[fr], function (sum, N) {
+				usevector(Pmle[fr], function (to, P) {
+					P[to] = N[to] / sum;
+				});
+			});
+		});
+		
+		if (R) // simulation mode
+			usematrix(Rerr, function (fr,to,Rerr) {
+				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+			});
+		
 		this.record({
 			at:"batch",t: this.t, s: this.s,
-			hist: stats,
+			//hist: stats,
+			avg_rate: this.lambda,
+			rel_rate_err: Rerr,
+			mle_tx_prs: Pmle,
 			state_jumps: this.jumps, 
 			stat_corr: this.gamma[this.s-1]
 		});
@@ -414,27 +401,29 @@ class RAN {
 	}
 
 	onEnd() {
-		this.record({
+		var stats = {
 			at:"end", t:this.t, s:this.s,
 			corr_time: this.Tc, 
-			jump_rates: this.A, 
+			jump_rates: this.Amle, 
 			avg_rate: this.lambda,
-			lambdaTc_ratio: this.lambdaTc,
-			end_corr: this.gamma[this.T-1],
+			lambdaTc_ratio: this.lambda * this.Tc,
+			end_corr: this.gamma[this.s-1],
 			lag0_corr: this.gamma0,
+			mean_count: this.lambda * this.t,
 			mle_holding_times: this.Rmle,
 			mle_holding_errs: this.Rerr,
-			coherence_intervals: this.T / this.Tc,
+			coherence_intervals: this.t / this.Tc,
 			mle_tx_prs: this.Pmle,
 			tx_counts: this.NA
-		});
+		};
+
+		stats.degeneracy = stats.mean_count / stats.coherence_intervals;
+		stats.snr = Math.sqrt( stats.mean_count / (1 + stats.degeneracy) );
+
+		this.record(stats);
 	}
 
 	onConfig() {
-		var 
-			lambda = avgRate(this.A),
-			Tc = 1/lambda;
-		
 		this.record({
 			at: "config", t: this.t, s: this.s,
 			states: this.K,
@@ -449,9 +438,9 @@ class RAN {
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
 			tx_prs: this.P,
-			avg_jump_rate: lambda,
-			exp_coherence_time: Tc,
-			run_steps: this.T,
+			avg_jump_rate: this.lambda,
+			exp_coherence_time: this.Tc,
+			run_steps: this.Steps,
 			absorb_stats: this.ab
 		});
 	}
@@ -507,12 +496,12 @@ class RAN {
 		if ( this.events ) { // realtime process
 			var
 				K = this.K,
-				dt = this.dt = this.dt,
-				ts = this.ts = dt / this.nyquist,
+				ts = this.ts = 1 / this.nyquist,
 				fs = 1/ts,
 				fb = fs / this.nyquist,
 				Tc = 1/fb,
 				lambda = this.lambda = 2.3 / Tc,
+				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
 		}
 		
@@ -531,6 +520,8 @@ class RAN {
 						pi[k] = 1/R[k][k];
 					}),
 				ab = this.ab = firstAbsorbTimes(P);
+			
+			//Log(P,K,ab,R);
 		}
 
 		else
@@ -545,7 +536,6 @@ class RAN {
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
 				ts = this.ts = 1/fs, // sample time
-				dt = ts * this.nyquist,
 				pi = this.pi = [p, q];	
 		}
 
@@ -562,7 +552,6 @@ class RAN {
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
 				ts = this.ts = 1/fs, // sample time
-				dt = ts * this.nyquist,
 				pi = this.pi = [p, q];
 		}
 
@@ -582,10 +571,9 @@ class RAN {
 			});
 			
 			var			
-				dt = this.dt,
-				ts = this.ts = dt / this.nyquist,
+				ts = this.ts = 1 / this.nyquist,
 				A = this.A = matrix(K, K, function (fr,to,A) {
-					A[fr][to] = (P[fr][to] - delta(fr,to)) / dt;
+					A[fr][to] = (P[fr][to] - delta(fr,to)) / ts;
 				}),
 				fs = 1/ts,
 				fb = fs / this.nyquist,
@@ -600,8 +588,7 @@ class RAN {
 				Tc = this.Tc = 2.3 / lambda, // coherence time
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
-				ts = this.ts = 1/fs, // sample time
-				dt = this.dt = ts * this.nyquist;
+				ts = this.ts = 1/fs;  // sample time
 		}
 		
 		if ( !this.sym ) {  // default state symbols
@@ -627,6 +614,9 @@ class RAN {
 		// allocate the ensemble
 		
 		var 
+			Amle = this.Amle = matrix(K,K),
+			lambda = this.lambda = avgRate(this.A),
+			Tc = this.Tc = 1/lambda,				
 			UA = this.UA = vector(N),
 			NA = this.NA = matrix(K,K,0),	
 			Pmle = this.Pmle = matrix(K,K,0), 
@@ -652,9 +642,7 @@ class RAN {
 
 		if ( this.events )   // realtime process
 			usevector(U, function(n) {   
-				H[n] = 0;
-				U0[n] =  (n<Np) ? 1 : 0;
-				U[n] = -1; // invalid state value forces jump at first step
+				H[n] = U0[n] = U[n] = 0;
 			});
 		
 		else { // simulated process
@@ -662,7 +650,7 @@ class RAN {
 				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
 			});
 
-			if (K == 2) {  // initialize two-state process
+			if (K == 2) {  // initialize two-state process (same as K-state init but added control)
 				var R01=R[0][1], R10=R[1][0];
 
 				usevector(U, function (n) {
@@ -691,7 +679,7 @@ class RAN {
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
-		this.activity = new STATS(this.bins,N);  // initialize ensemble stats
+		this.activity = new STATS(this.statBins,N);  // initialize ensemble stats
 		this.T = this.steps;  // number of steps over specified interval
 		
 		this.gamma = vector(this.T, 0);  // statistical autocovariance ensemble averaged
@@ -701,7 +689,7 @@ class RAN {
 		this.ranStream = new STREAM.Readable({  // source process events from this stream
 			objectMode: true,
 			read: function () {  // kick-start or terminate the pipe
-				Log("pipe kick",ran.t, ran.dt, ran.Tc, ran.steps);
+				Log("pipe kick",ran.t, ran.s, ran.steps);
 				
 				if ( ran.t < ran.runSteps ) 	// kick-start 
 					ran.start( );
@@ -741,21 +729,21 @@ RAN.MLE = require("expectation-maximization");
 
 module.exports = RAN;
 
-function STATS(bins,N) {
-	this.bins= bins;
-	this.dbins= (bins-1) / N;
-	this.dcounts= (N-1) / (bins-1);
+function STATS(statBins,N) {
+	this.statBins= statBins;
+	this.dbins= (statBins-1) / N;
+	this.dcounts= (N-1) / (statBins-1);
 	this.samples= 0;
 	
 	var 
-		hist = this.hist = vector(bins,0),
+		hist = this.hist = vector(statBins,0),
 		cnt = 1, del = this.dcounts,
-		count = this.count = vector(bins, function (bin,H) {
+		count = this.count = vector(statBins, function (bin,H) {
 			H[bin] = Math.round(cnt += del);
 		});
 
 	/*
-	for (var cnt=1,bin=0; bin<bins; bin++, cnt+=this.dcounts) {
+	for (var cnt=1,bin=0; bin<statBins; bin++, cnt+=this.dcounts) {
 		hist[bin] = 0;
 		count[bin] = Math.round(cnt);
 	}*/
@@ -767,7 +755,7 @@ STATS.prototype.add = function (val) {
 }
 
 STATS.prototype.norm = function () {
-	for (var bin=0, hist=this.hist, bins=this.bins; bin<bins; bin++) hist[bin] /= this.samples * this.dcounts;
+	for (var bin=0, hist=this.hist, statBins=this.statBins; bin<statBins; bin++) hist[bin] /= this.samples * this.dcounts;
 }
 
 function expdev(mean) {
@@ -908,8 +896,6 @@ function firstAbsorbTimes(P) {
 			pAb: M.matrix([])
 		};
 	
-	Log(P,kAb,kTr);
-	
 	if ( scope.nAb>1 )
 		M.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); tAb = N*ones(nTr,1); pAb = N*R;", scope);
 		
@@ -1009,7 +995,7 @@ switch (0) {   //======== unit tests
 			N: 50,
 			batch:1,
 			//wiener: 0,
-			//bins: 50,
+			//statBins: 50,
 
 			//A: [[0,1,2],[3,0,4],[5,6,0]],
 			//sym: [-1,0,1],
@@ -1033,13 +1019,13 @@ switch (0) {   //======== unit tests
 			//P: [[0.9,0.1],[0.1,0.9]],
 			//P: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
 			//P: [[0.1, 0.9], [0.3, 0.7]],
-			//P: [[0.1, 0.9], [0.4, 0.6]],
+			P: [[0.1, 0.9], [0.4, 0.6]],
 
 			// textbook exs 
 			//P: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
 			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
-			P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
+			//P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
 			//sym: [-1,1],
 
