@@ -271,11 +271,10 @@ class RAN {
 					return ran.t;
 				});
 				this.end();
-				Log(this.HJ, this.NJ, this.Rmle);
 				this.steps = 0;
 			}
 			else
-				Log("Feed emptied");
+				Log("Event feed emptied");
 		
 		else {  // simulation mode
 			this.step(); 
