@@ -341,9 +341,9 @@ class RAN {
 			P = this.P,
 			nyquist = this.nyquist,
 			Amle = this.Amle,
-			Rerr = this.Rerr,
 			Rmle = this.Rmle,
 			NA = this.NA,
+			max = Math.max,
 			Pmle = this.Pmle;
 		
 		usematrix(Rmle, function (fr,to) { 
@@ -361,16 +361,21 @@ class RAN {
 			});
 		});
 		
-		if (R) // simulation mode
-			usematrix(Rerr, function (fr,to,Rerr) {
-				Rerr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
-			});
+		var 
+			Perr = this.Perr = P 
+				? ( Pmle[0][0] - P[0][0] ) / P[K-1][K-1]
+				: 0;
+		
+			/*
+			usematrix(Rmle, function (fr,to) {
+				Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+			}); */
 		
 		this.record({
 			at:"batch",t: this.t, s: this.s,
 			//hist: stats,
 			avg_rate: this.lambda,
-			rel_rate_err: Rerr,
+			rel_txpr_error: Perr,
 			mle_tx_prs: Pmle,
 			state_jumps: this.jumps, 
 			stat_corr: this.gamma[this.s-1]
@@ -410,7 +415,7 @@ class RAN {
 			lag0_corr: this.gamma0,
 			mean_count: this.lambda * this.t,
 			mle_holding_times: this.Rmle,
-			mle_holding_errs: this.Rerr,
+			rel_txpr_error: this.Perr,
 			coherence_intervals: this.t / this.Tc,
 			mle_tx_prs: this.Pmle,
 			tx_counts: this.NA
@@ -623,7 +628,7 @@ class RAN {
 			NJ = this.NJ = matrix(K,K,0),
 			PJ = this.PJ = matrix(K,K,P),
 			Rmle = this.Rmle = matrix(K,K),
-			Rerr = this.Rerr = matrix(K,K),
+			Perr = this.Perr = 1,
 			Pcor = this.Pcor = matrix(K,K),
 			p = 1/K,
 			Np = p * N,
@@ -1043,6 +1048,7 @@ switch (0) {   //======== unit tests
 						break;
 
 					case "batch":
+						//Log(ev.s,ev.rel_txpr_error);
 						break;
 
 					case "end":
