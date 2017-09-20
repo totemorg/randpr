@@ -238,23 +238,39 @@ class RAN {
 		var 
 			ran = this,
 			exp = Math.exp, 
-			log = Math.log;
+			log = Math.log,
+			evStream = this.evStream;
 
 		function evfeed(evs, maxevbuf, ts, cb) {
-			var n = 0, t = 0, evbuf = [], evStream = new STREAM.Readable({
-				objectMode: true,
-				read: function () {
-					this.push( evs[n++] || null );
-				}
-			});
+			var n = 0, t = 0, evbuf = [];
 			
-			for ( var ev = evStream.read(); ev; ev = evStream.read() ) {
+			function eachEvent(cb) {
+				var ev = evStream.read();
+				
+				if (ev)
+					if ( ev.constructor == String )
+						try {
+							for ( ; ev ; ev = evStream.read() ) cb( JSON.parse(ev) ); 
+						}
+						catch (err) {
+							for ( ; ev ; ev = evStream.read() ) {
+								var vals = ev.split(",");
+								cb( { x: parseFloat(vals[0]), y: parseFloat(vals[1]), z: parseFloat(vals[2]), t: parseFloat(vals[3]), n: parseInt(vals[4]), u: parseInt(vals[5]) } );
+							}
+						}
+
+					else
+						for ( ; ev ; ev = evStream.read() ) cb(ev);
+				
+			}
+			
+			eachEvent( function (ev) {
 				if (ev.t - t > ts  || evbuf.length == maxevbuf) {
 					t = cb( evbuf ); evbuf = [ev];
 				}
 				else
 					evbuf.push (ev );
-			}
+			});
 		}
 					
 		function poisson(m,a) {
@@ -265,7 +281,7 @@ class RAN {
 
 		if ( this.events )  // realtime mode
 			if ( this.steps ) {
-				evfeed( this.events, this.N, this.ts, function (evs) {  // ingest a batch of events in over next sampe time  
+				evfeed( this.events, this.N, this.ts, function (evs) {  // ingest a batch of events occuring over next sampe time  
 					Log("Feed events",evs.length);
 					ran.step(evs);
 					return ran.t;
@@ -451,7 +467,39 @@ class RAN {
 	
 	pipe(tar, cb) {  // if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
 
-		if ( this.store ) {  // in buffering mode
+		if ( this.events )  // in realtime mode
+			switch (this.events.constructor) {  // realtime event stream for reverse mode
+				case String:
+					this.evStream = FS.createReadStream(evs,"utf8");
+					break;
+					
+				case Array:
+					var pos = 0;
+					this.evStream =  new STREAM.Readable({  // source process events from this stream
+						objectMode: true,
+						read: function () {  
+							this.push( evs[pos++] || null );
+						}
+					});	
+					break;
+					
+				case Object:  // this needs work
+					var pos = 0, eos = false;
+					this.evStream =  new STREAM.Readable({  // source process events from this stream
+						objectMode: true,
+						read: function () {  
+							var str = this;
+							if ( !eos )
+								evs.sql.query("SELECT * FROM ?? LIMIT ?,?", [evs.ds, pos, evs.buf])
+								.on("result", function (ev) {
+									str.push( ev );
+								});
+						}
+					});
+					break;
+			}
+		
+		if ( this.store ) {  // pipe in buffering mode
 			while (this.s < this.steps) this.start( );
 			this.end();
 			
@@ -459,7 +507,7 @@ class RAN {
 				cb( this.store );
 			
 			else {
-				var n=0, evStream = new STEAM.Readable({
+				var n=0, evStream = new STREAM.Readable({
 					read: function () {
 						this.push( this.store[n++] || null );
 					}
@@ -469,23 +517,58 @@ class RAN {
 			}
 		}
 
-		else 	// in streaming mode
-		if (cb) {  // append records to target list
-			var tarStream = new STREAM.Writable({
-				objectMode: true,
-				write: function (ev,en,cb) {
-					tar.push(ev);
-					cb(null);
-				}
-			});
+		else {	// pipe in streaming mode
+			
+			var
+				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (simulation or realtime mode)
+					objectMode: true,
+					read: function () {  // kick-start or terminate the pipe
+						Log("prime pipe",ran.s);
 
-			this.ranStream.pipe(this.editStream).pipe(tarStream).on("finish", function () {
-				cb(tar);
-			});
+						if ( ran.t < ran.runSteps ) 	// kick-start 
+							ran.start( );
+
+						else  { // terminate
+							ran.end();
+							this.push(null);
+						}
+					}
+				}),
+
+				editStream = new STREAM.Transform({  // 2nd stage filters events
+					writableObjectMode: true,
+					readableObjectMode: true,
+					transform: function (ev,en,cb) {
+						ran.filter(this,ev);
+						cb(null);
+					}
+				}),
+
+				charStream = new STREAM.Transform({  // 3rd stage make events human readable 
+					writableObjectMode: true,
+					transform: function (ev,en,cb) {
+						this.push( JSON.stringify(ev) ); 
+						cb(null);
+					}
+				});
+
+			if (cb) {  // stream evrecs to callback
+				var cbStream = new STREAM.Writable({
+					objectMode: true,
+					write: function (ev,en,cb) {
+						tar.push(ev);
+						cb(null);
+					}
+				});
+
+				ranStream.pipe(editStream).pipe(cbStream).on("finish", function () {
+					cb(tar);
+				});
+			}
+
+			else  // stream evrecs to target stream
+				ranStream.pipe(editStream).pipe(charStream).pipe(tar);
 		}
-		
-		else  // stream records to target stream
-			this.ranStream.pipe(this.editStream).pipe(this.charStream).pipe(tar);
 	}
 		
 	config (opts) {  // configure the process
@@ -687,40 +770,6 @@ class RAN {
 		this.T = this.steps;  // number of steps over specified interval
 		
 		this.gamma = vector(this.T, 0);  // statistical autocovariance ensemble averaged
-
-		// allocate streams (unused when this.store provided)
-
-		this.ranStream = new STREAM.Readable({  // source process events from this stream
-			objectMode: true,
-			read: function () {  // kick-start or terminate the pipe
-				Log("pipe kick",ran.t, ran.s, ran.steps);
-				
-				if ( ran.t < ran.runSteps ) 	// kick-start 
-					ran.start( );
-				
-				else  { // terminate
-					ran.end();
-					this.push(null);
-				}
-			}
-		});
-
-		this.editStream = new STREAM.Transform({  // process filters events on this stream
-			writableObjectMode: true,
-			readableObjectMode: true,
-			transform: function (ev,en,cb) {
-				ran.filter(this,ev);
-				cb(null);
-			}
-		});
-
-		this.charStream = new STREAM.Transform({  // process makes events human readable on this stream
-			writableObjectMode: true,
-			transform: function (ev,en,cb) {
-				this.push( JSON.stringify(ev) ); 
-				cb(null);
-			}
-		});
 
 		this.onConfig();
 	}
