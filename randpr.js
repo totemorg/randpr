@@ -40,7 +40,7 @@ class RAN {
 			wiener: 0,  // number of additional random walks at each wiener step
 			reversible: false,  // tailor A to make process reversible	
 			statBins: 0,  // number of statBins for ensemble activity histogram
-			jumpModel: "poisson",   // typically "poisson" but "gillespie" allowed
+			jumpModel: "homogeneous",   // homogeneous or an inhomogenous model (e.g. "gillespie")
 
 			filter: function (str,ev) {  //< streaming filter modifies events destined for the sinking stream
 				switch ( ev.at ) {
@@ -108,7 +108,7 @@ class RAN {
 		if (cb) cb(this);
 	}
 	
-	jump (fr, held, cb) {   // callback cb(from-state, to-state, next holding time) *if* process can jump
+	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
 		function Gillespie( fr, P, R ) {  // compute cumulative tx probs P given holding times R
 			var R0 = R[fr], K = P.length;
@@ -126,12 +126,12 @@ class RAN {
 		var 
 			K = this.K, R = this.R, PJ = this.PJ, A = this.A, HJ = this.HJ, NJ = this.NJ;
 
-		switch (this.jumpModel) {  // reseed jump rates or time inhomogenous mode if needed
-			case "gillespie":  // reseed tx probs using Gillespie model
+		switch (this.jumpModel) {  // reseed jump rates if time-inhomogenous model
+			case "gillespie":  // reseed tx probs using Gillespie model (provides a time-inhomogeneous process)
 				Gillespie( fr, PJ[fr], R[fr] );
 				break;
 
-			case "poisson": // Poisson already seeded
+			case "homogeneous": // already seeded
 			default:			
 				break;
 		}
@@ -151,7 +151,7 @@ class RAN {
 		}
 	}
 	
-	end() {  // save metrics when process terminates
+	end() {  // terminate process
 		
 		this.onBatch();
 
@@ -161,7 +161,7 @@ class RAN {
 		this.onEnd();
 	}
 	
-	step (evs) {  // step process with callback to onStep
+	step (evs) {  // step process forward one step
 		var 
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,Pmle=this.Pmle,NU=this.NU,K=this.K,
@@ -405,7 +405,8 @@ class RAN {
 	onStep () {		// null to disable
 		this.record({
 			at:"step", t:this.t, s:this.s, 
-			gamma:this.gamma[this.s]
+			gamma:this.gamma[this.s],
+			walk: this.wiener ? this.WU : []
 		});
 	}
 
