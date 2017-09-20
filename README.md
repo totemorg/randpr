@@ -9,16 +9,17 @@
 
 In its "forward" (aka "simulation") mode, RANDPR will generate a first-order, K-state Markov process given its first-order, KxK
 transition probabilites.  In its "reverse" (aka "realtime") mode, RANDPR recovesr a MLE of these transition probabilities.  Both 
-discrete- and continious-time models are supported in either mode.  In its forward mode, RANDPR will compute equilibrium 
-probabilities (if they exist), mean recurrence times, time to first absorption, absorption probabilites and the 
+discrete- and continious-time models are supported in either forward or reverse mode.  In its forward mode, RANDPR will 
+compute equilibrium probabilities (if they exist), mean recurrence times, time to first absorption, absorption probabilites and the 
 statistical auto-covariance function.
 
-As such, RANDPR can create ergodic, regular, absorbtive, processes, as well as Weiner (stationary in first
-increments) and wide-sense stationary processes.
+RANDPR can create ergodic, regular, absorptive processes, as well as Weiner (stationary in first increments) 
+and wide-sense stationary processes (though MLE for the Weiner process, e.g. first time to exit, have not yet been 
+implemented).
 
 In addition to transition probabilites, RANDPR accepts a batch size and nyquist parameters, as well as onStep(), onBatch(), 
-onEnd(), and filter() methods to sample metrics in both both modes.  Its forward (soon reverse) of RANDPR makes 
-use of piped streams to minimize memory usage.
+onEnd(), and filter() methods to sample metrics in both both modes.  Both the forward and the reverse mode of RANDPR 
+makes use of piped streams to minimize memory usage.
 
 ## Databases
 
