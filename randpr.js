@@ -3,6 +3,12 @@
 @requires stream
 @requires mathjs
 @requires enum
+
+www.statslab.cam.ac.uk/~rrw1
+www.stat.yale.edu/~pollard
+people.math.gatech.edu/~randall
+www.stat.berkeley.edu/~pitman
+www.math.dartmouth.edu/~pw
 **/
 
 var			// nodejs modules
