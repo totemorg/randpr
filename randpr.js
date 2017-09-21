@@ -255,19 +255,6 @@ class RAN {
 			exp = Math.exp, 
 			log = Math.log;
 
-		function evfeed(evStream, batch, ts, cb) {  // ingest a batch of events occuring over next sampe time  
-			var t = 0, evbuf = [];
-			
-			for (var ev = evStream.read(); ev; ev = evStream.read() ) {
-				if (ev.t - t > ts  || evbuf.length == batch) {
-					t = cb( evbuf ); evbuf = [ev];
-				}
-				
-				else
-					evbuf.push (ev );
-			}
-		}
-					
 		function poisson(m,a) {
 			// a^m e(-a) / m!
 			for (var sum=0,k=m; k; k--) sum += log(k);
@@ -276,7 +263,7 @@ class RAN {
 
 		if ( this.events )  // realtime mode
 			if ( this.steps ) {
-				evfeed( this.evStream, this.N, this.ts, function (evs) {  
+				this.events( this.N, this.ts, function (evs) {  
 					Log("Feed events",evs.length);
 					ran.step(evs);
 					return ran.t;
@@ -463,50 +450,6 @@ class RAN {
 	
 	pipe(tar, cb) {  // if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
 
-		if ( this.events )  // in realtime mode
-			switch (this.events.constructor) {  // event stream for RAN reverse mode
-				case String:
-					this.evStream = FS.createReadStream(evs,"utf8").on("read", function (buf) {
-						buf.split("\n").each(function (n,ev) {
-
-							try {
-								cb( JSON.parse(ev) ); 
-							}
-							catch (err) {
-								var vals = ev.split(",");
-								cb( { x: parseFloat(vals[0]), y: parseFloat(vals[1]), z: parseFloat(vals[2]), t: parseFloat(vals[3]), n: parseInt(vals[4]), u: parseInt(vals[5]) } );
-							}
-		
-						});
-					});
-					break;
-					
-				case Array:
-					var pos = 0, evs = this.events;
-					this.evStream =  new STREAM.Readable({  // source process events from this stream
-						objectMode: true,
-						read: function () {  
-							this.push( evs[pos++] || null );
-						}
-					});	
-					break;
-					
-				case Object:  // this needs work
-					var pos = 0, eos = false;
-					this.evStream =  new STREAM.Readable({  // source process events from this stream
-						objectMode: true,
-						read: function () {  
-							var str = this;
-							if ( !eos )
-								evs.sql.query("SELECT * FROM ?? LIMIT ?,?", [evs.ds, pos, evs.buf])
-								.on("result", function (ev) {
-									str.push( ev );
-								});
-						}
-					});
-					break;
-			}
-		
 		if ( this.store ) {  // pipe in buffering mode
 			while (this.s < this.steps) this.start( );
 			this.end();
@@ -587,9 +530,12 @@ class RAN {
 			N = this.N, 
 			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
+		Log(">>>> ran config ");
+		
 		if ( this.events ) { // realtime process
 			var
-				K = this.K,
+				P = this.P,  // from-to transition probs
+				K = this.K = P.length,
 				ts = this.ts = 1 / this.nyquist,
 				fs = 1/ts,
 				fb = fs / this.nyquist,
@@ -597,6 +543,7 @@ class RAN {
 				lambda = this.lambda = 2.3 / Tc,
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
+			Log("realtime",K,ts,A);
 		}
 		
 		else
