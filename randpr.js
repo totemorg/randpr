@@ -263,12 +263,15 @@ class RAN {
 
 		if ( this.events )  // realtime mode
 			if ( this.steps ) {
-				this.events( this.N, this.ts, function (evs) {  
-					Log("Feed events",evs.length);
-					ran.step(evs);
-					return ran.t;
+				this.evget( this.events, this.N, this.ts, function (evs) {  
+					if ( evs ) {
+						Log("randpr feed",evs.length, evs[0].t);
+						ran.step(evs);
+						return ran.t;
+					}
+					else
+						ran.end();
 				});
-				this.end();
 				this.steps = 0;
 			}
 			else
@@ -448,7 +451,8 @@ class RAN {
 		});
 	}
 	
-	pipe(tar, cb) {  // if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
+	pipe(tar, cb) {  // stream RAN onEvents to tar sink or to cb if supplied
+	// if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
 
 		if ( this.store ) {  // pipe in buffering mode
 			while (this.s < this.steps) this.start( );
@@ -473,7 +477,7 @@ class RAN {
 				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (simulation or realtime mode)
 					objectMode: true,
 					read: function () {  // kick-start or terminate the pipe
-						Log("prime pipe",ran.s);
+						Log("randpr started",ran.s);
 
 						if ( ran.t < ran.runSteps ) 	// kick-start 
 							ran.start( );
@@ -502,7 +506,7 @@ class RAN {
 					}
 				});
 
-			if (cb) {  // stream RAN evrecs to callback
+			if (cb) {  // stream RAN onEvents to callback
 				var cbStream = new STREAM.Writable({
 					objectMode: true,
 					write: function (ev,en,cb) {
@@ -522,7 +526,7 @@ class RAN {
 	}
 		
 	config (opts) {  // configure the process
-		
+
 		if (opts) Copy(opts, this);
 	
 		var 
@@ -530,8 +534,6 @@ class RAN {
 			N = this.N, 
 			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
-		Log(">>>> ran config ");
-		
 		if ( this.events ) { // realtime process
 			var
 				P = this.P,  // from-to transition probs
@@ -543,6 +545,7 @@ class RAN {
 				lambda = this.lambda = 2.3 / Tc,
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
+			
 			Log("realtime",K,ts,A);
 		}
 		
