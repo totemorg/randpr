@@ -30,25 +30,22 @@ class RAN {
 	constructor(opts, cb) {
 		Copy({  // default configuration
 
-			// inputs held fixed as process evolves
-			
-			N: 0, 		// ensemble size
-			A: null,	// process parameters: [dims, units, or range]
-				// [KxK] generate K-state process with jump rate matrix [from, to]
-				// {Tc,p} generate K=2 state process with prescribed coherence time and on-state probability
-				// {alpha,beta} generate K=2 state process with prescribed rates
-				// {n} generate K-state process with n=K^2-K unqiue random rates
-				// {K} generate K-state process with n=K^2-K unqiue random rates
-				// {dt,n,agent,fetch,quantize} real-time process at prescribed sampling time dt[s] having n-rates
-
-			batch: 20, 	// number of steps to batch before stats updated
-			sym: null, 	// [K] state symbols (default = 0:K-1)
+			// wiener process: [dims, units, or range]
+			//>> inputs
 			wiener: 0,  // number of additional random walks at each wiener step
-			reversible: false,  // tailor A to make process reversible	
-			statBins: 0,  // number of statBins for ensemble activity histogram
+			//>> outputs
+			WU: null, 		// [N] wiener ensemble
+			WQ: null, 		// [N] wiener cummulative walk ensemble
+
+			// K-state markov process: [dims, units, or range]
+			//>> inputs
+			N: 0, 		// ensemble size
+			P: null, 	// [KxK] from-to state tx probabilities 
+			sym: null, 	// [K] state symbols (default = 0:K-1)
+			statBins: 0,  // reserved - number of statBins for ensemble activity histogram
 			jumpModel: "homogeneous",   // homogeneous or an inhomogenous model (e.g. "gillespie")
 
-			filter: function (str,ev) {  //< streaming filter modifies events destined for the sinking stream
+			filter: function (str,ev) {  // default method to filter onStep,onBatch,onConfig,onEnd,... info
 				switch ( ev.at ) {
 					case "jump":
 					case "config":
@@ -59,16 +56,18 @@ class RAN {
 				}
 			},
 
-			store: null,   //< [] || null to make event pipe() stream sync || async
-			events: null, 	//< [...] || null to place process in realtime || simulation mode
+			store: null,   // [] || null to make event pipe() stream sync || async
 			
-			// updated as process evoloves
-
-			// wiener process: [dims, units, or range]
-			WU: null, 		// [N] wiener ensemble
-			WQ: null, 		// [N] wiener cummulative walk ensemble
-
-			// markov process: [dims, units, or range]
+			nyquist: 1, // nyquist oversampling rate = 1/ts
+			steps: 10, // number of process steps of size ts
+			lambda: 0,  // average jump rate [jumps/s]
+			ctmode: false, 	// true=continious false=discrete time mode 
+			batch: 20, 	// number of steps to batch before stats updated
+			
+			// realtime mode
+			events: null, 	// event getter for realtime mode
+						
+			//>> outputs
 			K: 0, 		// number of states 
 			U: null,    // [N] ensemble states [0:K-1] at time t
 			U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
@@ -78,35 +77,30 @@ class RAN {
 			pAb: null,	// [K' x K-K'] absorption probs
 			UA: null, 	// [N] ensemble buffer to compute mle jump rates
 			Pmle: null, 	// [KxK] from-to state tx probabilities mle
-			P: null, 	// [KxK] from-to state tx probabilities 
 			Pcor: null, 	// [KxK] mle tx probabilities
 			PJ: null,	// [KxK] from-to cummulative state transition probabilities
 			NU: null, 	// [KxK] from-to samples-in-state probabilities
 			HJ: null, 	// [KxK] total time in from-to transition
 			NJ: null, 	// [KxK] number of from-to jumps
 			pi: null, 	// [K] equilib state probabilities 
+			A: null,	// [KxK] jump rates
 
 			// two-state markov parameters
-
+			//>> inputs
 			alpha: 0,  // on-to-off rate [jumps/s]
 			beta: 0,  // off-to-on rate [jumps/s]
 			p: 0,  // on state pr 
 			q: 0,  // off(not on) state pr 
 
-			// K-state parameters
-
-			lambda: 0,  // average jump rate [jumps/s]
+			// general
+			//>> outputs
+			
 			Tc: 0,  // coherence time >0 [s] 
-			nyquist: 1, // nyquist oversampling rate = 1/ts
-			steps: 10, // number of process steps of size ts
 			t: 0, 	// time
 			s: 0, 	// step number
 			ts: 1, 	// sample time = 1/nyquist
-
 			jumps: 0, // number of jumps
-			samples: 0, // number of elements scanned
-			realtime: null, // realtime process parameters
-			ctmode: false 	// true=continious false=discrete time mode 
+			samples: 0 // number of elements scanned
 		}, this);
 
 		if (opts) this.config(opts);
@@ -263,17 +257,18 @@ class RAN {
 
 		if ( this.events )  // realtime mode
 			if ( this.steps ) {
-				this.evget( this.events, this.N, this.ts, function (evs) {  
+				this.events(this.N, this.ts, function (evs) {  
 					if ( evs ) {
 						Log("randpr feed",evs.length, evs[0].t);
 						ran.step(evs);
 						return ran.t;
 					}
-					else
+					else 
 						ran.end();
 				});
 				this.steps = 0;
 			}
+			
 			else
 				Log("Event feed emptied");
 		
@@ -327,7 +322,7 @@ class RAN {
 	
 	record (ev) {  // record metrics to RAN stream
 		if (this.store) 
-			this.filter(this.store, ev);
+			this.filter(this.store, ev,this.events);
 		
 		else
 			this.ranStream.push(ev);
@@ -446,15 +441,14 @@ class RAN {
 			tx_prs: this.P,
 			avg_jump_rate: this.lambda,
 			exp_coherence_time: this.Tc,
-			run_steps: this.Steps,
+			run_steps: this.steps,
 			absorb_stats: this.ab
 		});
 	}
 	
-	pipe(tar, cb) {  // stream RAN onEvents to tar sink or to cb if supplied
-	// if no cb, stream events to target stream.  if cb, transfer events to target and callback when finished.
-
-		if ( this.store ) {  // pipe in buffering mode
+	pipe(sinkStream, cb) {  // sink onEvents to sinkStream or to callback cb(onEvents)
+		
+		if ( this.store ) {  // pipe in sync mode
 			while (this.s < this.steps) this.start( );
 			this.end();
 			
@@ -468,11 +462,11 @@ class RAN {
 					}
 				});
 				
-				evStream.pipe(tar);
+				evStream.pipe(sinkStream);
 			}
 		}
 
-		else {	// pipe in streaming mode
+		else {	// pipe in async mode
 			var
 				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (simulation or realtime mode)
 					objectMode: true,
@@ -493,7 +487,7 @@ class RAN {
 					writableObjectMode: true,
 					readableObjectMode: true,
 					transform: function (ev,en,cb) {
-						ran.filter(this,ev);
+						ran.filter(this,ev,this.events);
 						cb(null);
 					}
 				}),
@@ -506,22 +500,22 @@ class RAN {
 					}
 				});
 
-			if (cb) {  // stream RAN onEvents to callback
+			if (cb) {  // stream onEvents to callback
 				var cbStream = new STREAM.Writable({
 					objectMode: true,
 					write: function (ev,en,cb) {
-						tar.push(ev);
+						sinkStream.push(ev);
 						cb(null);
 					}
 				});
 
 				ranStream.pipe(editStream).pipe(cbStream).on("finish", function () {
-					cb(tar);
+					cb(sinkStream);
 				});
 			}
 
-			else  // stream evrecs to target stream
-				ranStream.pipe(editStream).pipe(charStream).pipe(tar);
+			else  // stream onEvents to target stream
+				ranStream.pipe(editStream).pipe(charStream).pipe(sinkStream);
 		}
 	}
 		
@@ -536,17 +530,17 @@ class RAN {
 
 		if ( this.events ) { // realtime process
 			var
-				P = this.P,  // from-to transition probs
-				K = this.K = P.length,
+				K = this.K,
+				P = this.P = matrix(K,K,0),  // from-to transition probs
 				ts = this.ts = 1 / this.nyquist,
-				fs = 1/ts,
+				fs = 1 / ts,
 				fb = fs / this.nyquist,
-				Tc = 1/fb,
+				Tc = 1 / fb,
 				lambda = this.lambda = 2.3 / Tc,
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
 			
-			Log("realtime",K,ts,A);
+			Log("realtime",K,P,ts,A);
 		}
 		
 		else
@@ -569,7 +563,7 @@ class RAN {
 		}
 
 		else
-		if ( alpha = this.alpha)  { // two-state process via alpha,beta,nyquist
+		if ( alpha = this.alpha )  { // two-state process via alpha,beta,nyquist
 			var 
 				beta = this.beta, 
 				p = alpha / (alpha + beta), 
@@ -723,9 +717,8 @@ class RAN {
 		}
 
 		this.activity = new STATS(this.statBins,N);  // initialize ensemble stats
-		this.T = this.steps;  // number of steps over specified interval
 		
-		this.gamma = vector(this.T, 0);  // statistical autocovariance ensemble averaged
+		this.gamma = vector(this.steps, 0);  // statistical autocovariance ensemble averaged
 
 		this.onConfig();
 	}
@@ -1046,7 +1039,7 @@ switch (0) {   //======== unit tests
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
 			//sym: [-2,-1,1,2],
 
-			filter: function (str, ev) {
+			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
 						str.push(ev);
