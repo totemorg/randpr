@@ -25,7 +25,7 @@ var															// shortcuts
 	Each = ENUM.each,
 	Log = console.log;
 
-class RAN {
+class RAND {
 	
 	constructor(opts, cb) {
 		Copy({  // default configuration
@@ -320,7 +320,7 @@ class RAN {
 		return Tc;
 	}
 	
-	record (ev) {  // record metrics to RAN stream
+	record (ev) {  // record metrics to RAND stream
 		if (this.store) 
 			this.filter(this.store, ev,this.events);
 		
@@ -712,7 +712,7 @@ class RAN {
 		}
 		
 		if (this.wiener) {  //  initialilze wiener processes
-			this.NRV = RAN.MVN( [0], [[1]] );
+			this.NRV = RAND.MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
@@ -726,10 +726,10 @@ class RAN {
 }
 
 // share the Gauss Multivariate and its MLE 
-RAN.MVN = require("multivariate-normal").default; 
-RAN.MLE = require("expectation-maximization"); 
+RAND.MVN = require("multivariate-normal").default; 
+RAND.MLE = require("expectation-maximization"); 
 
-module.exports = RAN;
+module.exports = RAND;
 
 function STATS(statBins,N) {
 	this.statBins= statBins;
@@ -993,7 +993,7 @@ switch (0) {   //======== unit tests
 		break;
 		
 	case 3:
-		var ran = new RAN({
+		var ran = new RAND({
 			N: 50,
 			batch:1,
 			//wiener: 0,
