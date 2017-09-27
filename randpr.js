@@ -32,7 +32,7 @@ class RAND {
 
 			// wiener process: [dims, units, or range]
 			//>> inputs
-			wiener: 0,  // number of additional random walks at each wiener step
+			wiener: 0,  // number of wiener steps at each time step
 			//>> outputs
 			WU: null, 		// [N] wiener ensemble
 			WQ: null, 		// [N] wiener cummulative walk ensemble
@@ -227,6 +227,7 @@ class RAND {
 		//Log(this.gamma[t]);
 		
 		if ( this.wiener ) {  // step wiener process
+			//Log("wsteps", this.wiener);
 			var 
 				M = this.wiener,
 				floor = Math.floor, sqrt = Math.sqrt, 
