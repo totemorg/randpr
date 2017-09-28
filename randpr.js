@@ -32,7 +32,7 @@ class RAND {
 
 			// wiener process: [dims, units, or range]
 			//>> inputs
-			wiener: 0,  // number of wiener steps at each time step
+			wiener: 0,  // number of wiener steps at each time step (0 disables)
 			//>> outputs
 			WU: null, 		// [N] wiener ensemble
 			WQ: null, 		// [N] wiener cummulative walk ensemble
