@@ -257,21 +257,11 @@ class RAND {
 		}
 
 		if ( this.events )  // realtime mode
-			if ( this.steps ) {
-				this.events(this.N, this.ts, function (evs) {  
-					if ( evs ) {
-						Log("randpr feed",evs.length, evs[0].t);
-						ran.step(evs);
-						return ran.t;
-					}
-					else 
-						ran.end();
-				});
-				this.steps = 0;
-			}
-			
-			else
-				Log("Event feed emptied");
+			this.events(this.N, this.ts, function (evs) {  
+				Log("randpr feed",evs.length, evs[0].t);
+				ran.step(evs);
+				return ran.t;
+			});
 		
 		else {  // simulation mode
 			this.step(); 
@@ -371,9 +361,9 @@ class RAND {
 		this.record({
 			at:"batch",t: this.t, s: this.s,
 			//hist: stats,
-			avg_rate: this.lambda,
+			mean_jump_rate: this.lambda,
 			rel_txpr_error: Perr,
-			mle_tx_prs: Pmle,
+			mle_txprs: Pmle,
 			state_jumps: this.jumps, 
 			stat_corr: this.gamma[this.s-1]
 		});
@@ -405,9 +395,9 @@ class RAND {
 	onEnd() {
 		var stats = {
 			at:"end", t:this.t, s:this.s,
-			corr_time: this.Tc, 
+			coherence_time: this.Tc, 
 			jump_rates: this.Amle, 
-			avg_rate: this.lambda,
+			mean_jump_rate: this.lambda,
 			lambdaTc_ratio: this.lambda * this.Tc,
 			end_corr: this.gamma[this.s-1],
 			lag0_corr: this.gamma0,
@@ -415,7 +405,7 @@ class RAND {
 			mle_holding_times: this.Rmle,
 			rel_txpr_error: this.Perr,
 			coherence_intervals: this.t / this.Tc,
-			mle_tx_prs: this.Pmle,
+			mle_txprs: this.Pmle,
 			tx_counts: this.NA
 		};
 
@@ -439,7 +429,7 @@ class RAND {
 			eq_pr: this.pi,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
-			tx_prs: this.P,
+			txprs: this.P,
 			avg_jump_rate: this.lambda,
 			exp_coherence_time: this.Tc,
 			run_steps: this.steps,
@@ -474,7 +464,7 @@ class RAND {
 					read: function () {  // kick-start or terminate the pipe
 						Log("randpr started",ran.s);
 
-						if ( ran.t < ran.runSteps ) 	// kick-start 
+						if ( ran.s < ran.steps ) 	// kick-start 
 							ran.start( );
 
 						else  { // terminate
