@@ -40,10 +40,11 @@ class RAND {
 			// K-state markov process: [dims, units, or range]
 			//>> inputs
 			N: 0, 		// ensemble size
-			P: null, 	// [KxK] from-to state tx probabilities 
-			sym: null, 	// [K] state symbols (default = 0:K-1)
+			trP: null, 	// [KxK] from-to state tx probabilities 
+			emP: null, // [KxM] from-observation emmision probabilities
+			S: null, 	// [K] state symbols (default = 0:K-1)
 			statBins: 0,  // reserved - number of statBins for ensemble activity histogram
-			jumpModel: "homogeneous",   // homogeneous or an inhomogenous model (e.g. "gillespie")
+			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 
 			filter: function (str,ev) {  // default method to filter onStep,onBatch,onConfig,onEnd,... info
 				switch ( ev.at ) {
@@ -61,28 +62,28 @@ class RAND {
 			nyquist: 1, // nyquist oversampling rate = 1/ts
 			steps: 10, // number of process steps of size ts
 			lambda: 0,  // average jump rate [jumps/s]
-			ctmode: false, 	// true=continious false=discrete time mode 
+			ctmode: false, 	// true=continuous false=discrete time mode 
 			batch: 20, 	// number of steps to batch before stats updated
 			
 			// realtime mode
 			events: null, 	// event getter for realtime mode
 						
 			//>> outputs
-			K: 0, 		// number of states 
-			U: null,    // [N] ensemble states [0:K-1] at time t
-			U0: null, 	// [N] ensemble states [0:K-1] at time t = 0
-			H: null, 	// [N] ensemble next jump time
+			K: 0, 		// number of states (state = [0:K-1], symbol = S[state])
+			U: null,    // [N] states at time t
+			U0: null, 	// [N] initial states at time t = 0
+			H: null, 	// [N] next jump time
 			R: null, 	// [KxK] from-to holding (mean recurrence) times
-			tAb: null, 	// [K'] absorption times
-			pAb: null,	// [K' x K-K'] absorption probs
-			UA: null, 	// [N] ensemble buffer to compute mle jump rates
-			Pmle: null, 	// [KxK] from-to state tx probabilities mle
-			Pcor: null, 	// [KxK] mle tx probabilities
-			PJ: null,	// [KxK] from-to cummulative state transition probabilities
+			abT: null, 	// [K'] absorption times K' <= K
+			abP: null,	// [K' x K-K'] absorption probabilities
+			UA: null, 	// [N] state buffer 
+			mleP: null, 	// [KxK] from-to state mle tx probabilities
+			corP: null, 	// [KxK] stat correlation probabilities
+			cumP: null,	// [KxK] from-to cummulative state transition probabilities
 			NU: null, 	// [KxK] from-to samples-in-state probabilities
-			HJ: null, 	// [KxK] total time in from-to transition
-			NJ: null, 	// [KxK] number of from-to jumps
-			pi: null, 	// [K] equilib state probabilities 
+			cumH: null, 	// [KxK] cummulative time in from-to transition
+			cumN: null, 	// [KxK] cummulative number of from-to jumps
+			pi: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
 
 			// two-state markov parameters
@@ -124,13 +125,14 @@ class RAND {
 		}
 	
 		var 
-			K = this.K, R = this.R, PJ = this.PJ, A = this.A, HJ = this.HJ, NJ = this.NJ;
+			K = this.K, R = this.R, cumP = this.cumP, A = this.A, cumH = this.cumH, cumN = this.cumN;
 
 		switch (this.jumpModel) {  // reseed jump rates if time-inhomogenous model
 			case "gillespie":  // reseed tx probs using Gillespie model (provides a time-inhomogeneous process)
-				Gillespie( fr, PJ[fr], R[fr] );
+				Gillespie( fr, cumP[fr], R[fr] );
 				break;
 
+			case "":
 			case "homogeneous": // already seeded
 			default:			
 				break;
@@ -138,7 +140,7 @@ class RAND {
 
 		// get new state by taking a random jump according to cummulative P[fr,to]
 			
-		for (var Pfr = PJ[fr], u=Math.random(), to=0; to < K && Pfr[to] <= u; to++) ;
+		for (var Pfr = cumP[fr], u=Math.random(), to=0; to < K && Pfr[to] <= u; to++) ;
 		if (to == K) to--;
   		
 		if ( fr != to ) {  // take jump
@@ -146,8 +148,8 @@ class RAND {
 
 			cb( fr, to, R[fr][fr] = this.ctmode ? expdev( 1/A[fr][to] ) : 0 );  // draw and store holding time (0) in ctime (dtime) mode
 
-			HJ[fr][to] += held; //R[fr][fr];  // total holding time in from-to jump
-			NJ[fr][to] ++;  // total number of from-to jumps
+			cumH[fr][to] += held; //R[fr][fr];  // cummulative holding time in from-to jump
+			cumN[fr][to] ++;  // cummulative number of from-to jumps
 		}
 	}
 	
@@ -164,8 +166,8 @@ class RAND {
 	step (evs) {  // step process forward one step
 		var 
 			ran = this,
-			U=this.U,H=this.H,R=this.R,U0=this.U0,Pmle=this.Pmle,NU=this.NU,K=this.K,
-			UA=this.UA, NA=this.NA, HJ = this.HJ, NJ = this.NJ,
+			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,NU=this.NU,K=this.K,
+			UA=this.UA, NA=this.NA, cumH = this.cumH, cumN = this.cumN,
 			t = this.t, s = this.s, N = this.N;
 		
 		this.gamma[s] = this.corr();
@@ -190,8 +192,8 @@ class RAND {
 				
 				if ( fr != to ) {
 					//ran.onJump(n,fr,to,0); 	// callback with jump info (uncomment if needed)
-					HJ[fr][to] += t - H[n]; 	// total holding time in from-to jump
-					NJ[fr][to] ++;  	// total number of from-to jumps
+					cumH[fr][to] += t - H[n]; 	// total holding time in from-to jump
+					cumN[fr][to] ++;  	// total number of from-to jumps
 					
 					U[ n ] = to;  		// set state
 					H[ n ] = t;			// hold jump time
@@ -223,7 +225,7 @@ class RAND {
 		//Log(UA.join(""));
 		//Log(U.join(""));
 		//Log(NA);
-		//Log(Pmle);
+		//Log(mleP);
 		//Log(this.gamma[t]);
 		
 		if ( this.wiener ) {  // step wiener process
@@ -287,12 +289,12 @@ class RAND {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, sym = this.sym, cor = 0, Pcor = this.Pcor, p, NU = this.NU, NS = this.samples;
+			K = this.K, S = this.S, cor = 0, corP = this.corP, p, NU = this.NU, NS = this.samples;
 
-		usevector(sym, function (fr) {
-			usevector(sym, function (to) {
-				p = Pcor[fr][to] = NU[fr][to] / NS;
-				cor += sym[fr] * sym[to] * p;
+		usevector(S, function (fr) {
+			usevector(S, function (to) {
+				p = corP[fr][to] = NU[fr][to] / NS;
+				cor += S[fr] * S[to] * p;
 			});
 		});
 
@@ -322,19 +324,19 @@ class RAND {
 	onBatch () {    // MLE jump rates and tx probs
 		var 
 			K = this.K,
-			HJ = this.HJ, 
-			NJ = this.NJ,
+			cumH = this.cumH, 
+			cumN = this.cumN,
 			R = this.R,
-			P = this.P,
+			trP = this.trP,
 			nyquist = this.nyquist,
 			Amle = this.Amle,
 			Rmle = this.Rmle,
 			NA = this.NA,
 			max = Math.max,
-			Pmle = this.Pmle;
+			mleP = this.mleP;
 		
 		usematrix(Rmle, function (fr,to) { 
-			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * HJ[fr][to] / NJ[fr][to];
+			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
 			Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
 		
@@ -342,15 +344,15 @@ class RAND {
 
 		usevector(NA, function (fr) {
 			sumvector(NA[fr], function (sum, N) {
-				usevector(Pmle[fr], function (to, P) {
+				usevector(mleP[fr], function (to, P) {
 					P[to] = N[to] / sum;
 				});
 			});
 		});
 		
 		var 
-			Perr = this.Perr = P 
-				? ( Pmle[0][0] - P[0][0] ) / P[K-1][K-1]
+			Perr = this.Perr = trP 
+				? ( mleP[0][0] - trP[0][0] ) / trP[K-1][K-1]
 				: 0;
 		
 			/*
@@ -362,8 +364,8 @@ class RAND {
 			at:"batch",t: this.t, s: this.s,
 			//hist: stats,
 			mean_jump_rate: this.lambda,
-			rel_txpr_error: Perr,
-			mle_txprs: Pmle,
+			rel_tr_prob_error: Perr,
+			mle_tr_prob: mleP,
 			state_jumps: this.jumps, 
 			stat_corr: this.gamma[this.s-1]
 		});
@@ -403,9 +405,9 @@ class RAND {
 			lag0_corr: this.gamma0,
 			mean_count: this.lambda * this.t,
 			mle_holding_times: this.Rmle,
-			rel_txpr_error: this.Perr,
+			rel_tr_prob_error: this.Perr,
 			coherence_intervals: this.t / this.Tc,
-			mle_txprs: this.Pmle,
+			mle_tr_prob: this.mleP,
 			tx_counts: this.NA
 		};
 
@@ -423,13 +425,12 @@ class RAND {
 			coherence_interval: this.steps, 
 			sample_time: this.ts,
 			jump_rates: this.A,
-			cumTxPr: this.PJ,
-			TxPrs: this.P,
+			cummulative_tr_prob: this.cumP,
+			tr_prob: this.trP,
 			hold_times: this.R,
-			eq_pr: this.pi,
+			equlib_prob: this.pi,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
-			txprs: this.P,
 			avg_jump_rate: this.lambda,
 			exp_coherence_time: this.Tc,
 			run_steps: this.steps,
@@ -522,7 +523,7 @@ class RAND {
 		if ( this.events ) { // realtime process
 			var
 				K = this.K,
-				P = this.P = matrix(K,K,0),  // from-to transition probs
+				trP = this.trP = matrix(K,K,0),  // from-to transition probs
 				ts = this.ts = 1 / this.nyquist,
 				fs = 1 / ts,
 				fb = fs / this.nyquist,
@@ -531,15 +532,15 @@ class RAND {
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
 			
-			Log("realtime",K,P,ts,A);
+			Log("realtime",K,trP,ts,A);
 		}
 		
 		else
-		if ( this.P ) {  // K-state process via from-to transition probs
+		if ( this.trP ) {  // K-state process via from-to transition probs
 			var 
-				P = this.P,  // from-to transition probs
-				K = this.K = P.length,
-				R = this.R = meanRecurTimes(P),  // from-to mean recurrence times
+				trP = this.trP,  // from-to transition probs
+				K = this.K = trP.length,
+				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
 				nyquist = this.nyquist,
 				ts = this.ts = 1/nyquist,
 				A = this.A = balanceRates( matrix(K,K, function (fr, to, A) {  // ctmode jump rates
@@ -548,9 +549,9 @@ class RAND {
 				pi = this.pi = vector(K, function (k,pi) {  // eq state probs
 						pi[k] = 1/R[k][k];
 					}),
-				ab = this.ab = firstAbsorbTimes(P);
+				ab = this.ab = firstAbsorbTimes(trP);
 			
-			//Log(P,K,ab,R);
+			//Log(trP,K,ab,R);
 		}
 
 		else
@@ -587,12 +588,12 @@ class RAND {
 		else
 		if ( K = this.K ) { // K-state process from K^2 - K random rates and nyquist
 			var 
-			 	P = this.P = matrix(K, K, function (fr,to,P) {
+			 	trP = this.trP = matrix(K, K, function (fr,to,P) {
 					P[fr][to] = rand();
 				});
 			
-			usevector(P, function (fr) {
-				sumvector(P[fr], function (sum, P) {
+			usevector(trP, function (fr) {
+				sumvector(trP[fr], function (sum, P) {
 					usevector(P, function (to) {
 						P[to] /= sum;
 					});
@@ -602,7 +603,7 @@ class RAND {
 			var			
 				ts = this.ts = 1 / this.nyquist,
 				A = this.A = matrix(K, K, function (fr,to,A) {
-					A[fr][to] = (P[fr][to] - delta(fr,to)) / ts;
+					A[fr][to] = (trP[fr][to] - delta(fr,to)) / ts;
 				}),
 				fs = 1/ts,
 				fb = fs / this.nyquist,
@@ -620,24 +621,24 @@ class RAND {
 				ts = this.ts = 1/fs;  // sample time
 		}
 		
-		if ( !this.sym ) {  // default state symbols
-			var sym = this.sym = vector(K);
+		if ( !this.S ) {  // default state symbols
+			var S = this.S = vector(K);
 			
 			if (K % 2) {
-				sym[0]=0;
+				S[0]=0;
 				for (var a=1, k=1; k<K; a++) {
-					sym[k++] = a; 
-					sym[k++] = -a;
+					S[k++] = a; 
+					S[k++] = -a;
 				}
 			}
 			
 			else			
 				for (var a=1, k=0; k<K; a++) {
-					sym[k++] = a; 
-					sym[k++] = -a;
+					S[k++] = a; 
+					S[k++] = -a;
 				}
 			
-			Log("symbols",sym);
+			Log("symbols",S);
 		}
 
 		// allocate the ensemble
@@ -647,13 +648,13 @@ class RAND {
 			Tc = this.Tc = 1/lambda,				
 			UA = this.UA = vector(N),
 			NA = this.NA = matrix(K,K,0),	
-			Pmle = this.Pmle = matrix(K,K,0), 
-			HJ = this.HJ = matrix(K,K,0),
-			NJ = this.NJ = matrix(K,K,0),
-			PJ = this.PJ = matrix(K,K,P),
+			mleP = this.mleP = matrix(K,K,0), 
+			cumH = this.cumH = matrix(K,K,0),
+			cumN = this.cumN = matrix(K,K,0),
+			cumP = this.cumP = matrix(K,K,trP),
 			Rmle = this.Rmle = matrix(K,K),
 			Perr = this.Perr = 1,
-			Pcor = this.Pcor = matrix(K,K),
+			corP = this.corP = matrix(K,K),
 			p = 1/K,
 			Np = p * N,
 			NU = this.NU = matrix(K,K,function (fr,to,NU) {
@@ -674,8 +675,8 @@ class RAND {
 			});
 		
 		else { // simulated process
-			usevector(PJ, function (fr) {
-				cumulative( PJ[fr] );  // initialize cummulative state transition probabilties
+			usevector(cumP, function (fr) {
+				cumulative( cumP[fr] );  // initialize cummulative state transition probabilties
 			});
 
 			if (K == 2) {  // initialize two-state process (same as K-state init but added control)
@@ -885,16 +886,16 @@ function firstAbsorbTimes(P) {
 			kTr: M.matrix(kTr),
 			nAb: kAb.length,
 			nTr: kTr.length,
-			tAb: M.matrix([]),
-			pAb: M.matrix([])
+			abT: M.matrix([]),
+			abP: M.matrix([])
 		};
 	
 	if ( scope.nAb>1 )
-		M.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); tAb = N*ones(nTr,1); pAb = N*R;", scope);
+		M.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", scope);
 		
 	return {
-		tAb: scope.tAb._data,
-		pAb: scope.pAb._data
+		abT: scope.abT._data,
+		abP: scope.abP._data
 	};
 }
 
@@ -991,7 +992,7 @@ switch (0) {   //======== unit tests
 			//statBins: 50,
 
 			//A: [[0,1,2],[3,0,4],[5,6,0]],
-			//sym: [-1,0,1],
+			//S: [-1,0,1],
 
 			//A: {dt: 0.04599999999999999, n: 2},  // Nq=20
 			//A: {dt: 0.09199999999999998, n: 2},  // Nq=10
@@ -1020,15 +1021,15 @@ switch (0) {   //======== unit tests
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
 			//P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
-			//sym: [-1,1],
+			//S: [-1,1],
 
 			//P: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
 			//P: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
-			//sym: [-1,0,1],
+			//S: [-1,0,1],
 			//P: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
 
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
-			//sym: [-2,-1,1,2],
+			//S: [-2,-1,1,2],
 
 			filter: function (str, ev) {  
 				switch (ev.at) {
