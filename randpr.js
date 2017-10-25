@@ -969,7 +969,41 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	}
 }
 
+function perms(vec,dims,vecs) {
+
+	if (vec.length == dims.length) 
+		vecs.push(vec);
+	
+	else 
+		for (var idx = 0, max = dims[vec.length]; idx<max; idx++) 
+			perms(vec.concat(idx), dims, vecs);
+	
+	return vecs;
+}
+
+function index(vec,dims) {
+	var idx = 0;
+	for (var off=1, n=0, N=dims.length; n<N; n++, idx += vec[N-n]*off, off*=dims[N-n] );
+		
+	return idx;
+}
+
+function quantize(vec,mins,dels,dims,clip) {
+	var floor = Math.floor;
+	for (var n=0, N=vec.length; n<N; n++) {
+		vec[n] = floor( (vec[n] - mins[n]) * dels[n] );
+		clip[n] = vec[n]<0 || vec[n] >=dims[n];
+	}
+	return vec;
+}
+
+//Y[n] = index( quantize( mvd[k].sample(), emP[k].mins, ..., clip) ); until ! any(clip);
+		
 switch (0) {   //======== unit tests
+	case 0:
+		Log(perms([],[2,6,4],[]));
+		break;
+		
 	case 1:
 		Log( meanRecurTimes(  
 			// [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
