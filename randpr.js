@@ -30,22 +30,23 @@ class RAND {
 	constructor(opts, cb) {
 		Copy({  // default configuration
 
-			// wiener process: [dims, units, or range]
-			//>> inputs
-			wiener: 0,  // number of wiener steps at each time step (0 disables)
-			//>> outputs
-			WU: null, 		// [N] wiener ensemble
-			WQ: null, 		// [N] wiener cummulative walk ensemble
-
-			// K-state markov process: [dims, units, or range]
-			//>> inputs
+			// K-state markov inputs 
 			N: 0, 		// ensemble size
+			weights: [1,0],  // observation sigma weights (external and states) 
+			parts: [1], // state partition among grid dimensions
+			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
 			trP: null, 	// [KxK] from-to state tx probabilities 
-			obs: null, // {dims: [D] } observation parms
 			symbols: null, 	// [K] state symbols (default = 0:K-1)
 			statBins: 0,  // reserved - number of statBins for ensemble activity histogram
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 
+			// two-state markov inputs
+			alpha: 0,  // on-to-off rate [jumps/s]
+			beta: 0,  // off-to-on rate [jumps/s]
+			p: 0,  // on state probability
+			q: 0,  // off(not on) state probability
+
+			// sampling
 			filter: function (str,ev) {  // default method to filter onStep,onBatch,onConfig,onEnd,... info
 				switch ( ev.at ) {
 					case "jump":
@@ -68,7 +69,7 @@ class RAND {
 			// realtime mode
 			events: null, 	// event getter for realtime mode
 						
-			//>> outputs
+			// outputs
 			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
 			Y: null, 	// [N] observation index
 			U: null,    // [N] states at time t
@@ -86,16 +87,10 @@ class RAND {
 			cumN: null, 	// [KxK] cummulative number of from-to jumps
 			pi: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
+			obs: null, // [K] observation parameters
 
-			// two-state markov parameters
-			//>> inputs
-			alpha: 0,  // on-to-off rate [jumps/s]
-			beta: 0,  // off-to-on rate [jumps/s]
-			p: 0,  // on state pr 
-			q: 0,  // off(not on) state pr 
-
-			// general
-			//>> outputs
+			WU: null, 		// [N] wiener ensemble
+			WQ: null, 		// [N] wiener cummulative walk ensemble
 			
 			Tc: 0,  // coherence time >0 [s] 
 			t: 0, 	// time
@@ -169,6 +164,7 @@ class RAND {
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,NU=this.NU,K=this.K,
 			UA=this.UA, NA=this.NA, cumH = this.cumH, cumN = this.cumN,
+			Y=this.Y, obs=this.obs,
 			t = this.t, s = this.s, N = this.N;
 		
 		this.gamma[s] = this.corr();
@@ -198,23 +194,22 @@ class RAND {
 					
 					U[ n ] = to;  		// set state
 					H[ n ] = t;			// hold jump time
+					Y[ n ] = obs[to].sample();  // save observation
 				}
 			});
 		}
 
 		else  // simulation mode
 			usevector(U, function (n) {
-				var held = t - H[n];  
+				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
 				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						ran.onJump(n,fr,to,hold); 	// callback with jump info
 
-						U[ n ] = to;  			// set state
-						H[ n ] = t + hold;    // advance to next jump time: hold = 0 (exptime) in discrete (continious) time mode
-						if (obs) {
-							var gen = obs.gens[to];
-							Y[ n ] = index(quantize(gen.mvd.sample(), gen.min, gen.del, obs.dims, []));
-						}
+						U[ n ] = to;  			// set new state
+						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
+						Y[ n ] = obs[to].sample(); // save observations
+						//Log(n,to,Y[n]);
 					});
 				}
 			});	
@@ -626,39 +621,39 @@ class RAND {
 				ts = this.ts = 1/fs;  // sample time
 		}
 		
-		if (obs = this.obs) {
+		var 
+			weights = this.weights,
+			parts = this.parts,
+			D = weights.length,
+			dims = vector( parts.length, function (n,dims) {
+				dims[n] = Math.round(parts[n] * K);
+			}),
+			grid = perms([], dims, []);
+		
+		Log("weights=",weights,"dims=",dims,"grid=",grid);
+		this.obs = vector(K, function (k,obs) {
 			var 
-				dims = obs.dims,
-				gens = obs.gens = new Array(K),
-				N = obs.sigmas,
-				D = dims.length;
-			
-			for (var k=0; k<K; k++) {
-				var 
-					mu = vector(D, function (i,mu) {
-						mu[i] = rand();
-					}),
+				n = 0,
+				
+				mu = vector(D, function (i,mu) {
+					mu[i] = weights[i] ? rand()*weights[i] : grid[k][n++];
+				}),
 
-					sigma = matrix(D,D, function (i,j, sig) {
-					}),
-
-					gen = gens[k] = {
-						min: vector(D),
-						max: vector(D),
-						del: vector(D)
-					},	
-					min = gen.min,
-					max = gen.max,
-					del = gen.del,
-					mvd = gen.mvd = RAND.MVN( mu, sigma );
-			
-				usevector(dims, function (i, min) {
-					min[i] = mu[i] - N * sigma[i][i];
-					max[i] = mu[i] + N * sigma[i][i];
-					del[i] = dims[i] / (max[i] - min[i]);
+				L = matrix(D,D, function (i,j, L) { // lower trianular matrix with real, positive diagonal
+					L[i][j] = (i <= j ) ? rand() : 0;
+				}),
+				
+				sigma = matrix(D,D, function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
+					var dot = 0;
+					usevector(L, function (n) {
+						dot += L[i][n] * L[j][n];
+					});
+					A[i][j] = dot * weights[i] * weights[j]
 				});
-			}
-		}
+						
+			Log(k,mu,sigma);
+			obs[k] = RAND.MVN( mu, sigma );
+		});
 			
 		if ( !this.symbols ) {  // default state symbols
 			var symbols = this.symbols = vector(K);
@@ -1038,7 +1033,7 @@ function quantize(vec,mins,dels,dims,clip) {
 
 //Y[n] = index( quantize( mvd[k].sample(), emP[k].mins, ..., clip) ); until ! any(clip);
 		
-switch (0) {   //======== unit tests
+switch (3) {   //======== unit tests
 	case 0:
 		Log(perms([],[2,6,4],[]));
 		break;
@@ -1059,7 +1054,7 @@ switch (0) {   //======== unit tests
 		
 	case 3:
 		var ran = new RAND({
-			N: 50,
+			N: 5,
 			batch:1,
 			//wiener: 0,
 			//statBins: 50,
@@ -1072,34 +1067,36 @@ switch (0) {   //======== unit tests
 			//A: [[0,2], [1,0]], 
 
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> pi[k] = 1/K  eqpr)
-			//P: [[.6, .4],[.4, .6]],
-			//P: [[0.83177, 0.16822], [0.17152, 0.82848]],
-			//P: [[.5, .5], [.5, .5]],
-			//P: [[0.1, 0.9], [0.9, 0.1]],
+			//trP: [[.6, .4],[.4, .6]],
+			//trP: [[0.83177, 0.16822], [0.17152, 0.82848]],
+			//trP: [[.5, .5], [.5, .5]],
+			//trP: [[0.1, 0.9], [0.9, 0.1]],
 
 			// textbook exs
-			//P: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
-			//P: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2  eqpr [.5, .333, .1666]
-			//P: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8  no eqprs
+			//trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			//trP: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2  eqpr [.5, .333, .1666]
+			//trP: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8  no eqprs
 
 			// these have different eqprs
-			//P: [[0.9,0.1],[0.1,0.9]],
-			//P: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
-			//P: [[0.1, 0.9], [0.3, 0.7]],
-			P: [[0.1, 0.9], [0.4, 0.6]],
+			//trP: [[0.9,0.1],[0.1,0.9]],
+			//trP: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
+			//trP: [[0.1, 0.9], [0.3, 0.7]],
+			weights: [1,1,0,0],
+			//trP: [[0.1, 0.9], [0.4, 0.6]],
 
 			// textbook exs 
-			//P: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
-			//P: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
-			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
-			//P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
+			//trP: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
+			//trP: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
+			//trP: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
+			//trP: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
 			//symbols: [-1,1],
 
-			//P: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
-			//P: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
+			//trP: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
+			//trP: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
 			//symbols: [-1,0,1],
-			//P: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
+			trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
+			parts: [0.5,0.5],
 
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
 			//symbols: [-2,-1,1,2],
@@ -1129,7 +1126,7 @@ switch (0) {   //======== unit tests
 			*/
 			
 			nyquist: 1,
-			steps: 200
+			steps: 20
 		}, 
 
 		function (ran) {
