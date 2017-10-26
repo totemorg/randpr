@@ -41,8 +41,8 @@ class RAND {
 			//>> inputs
 			N: 0, 		// ensemble size
 			trP: null, 	// [KxK] from-to state tx probabilities 
-			emP: null, // [KxM] from-observation emmision probabilities
-			S: null, 	// [K] state symbols (default = 0:K-1)
+			obs: null, // {dims: [D] } observation parms
+			symbols: null, 	// [K] state symbols (default = 0:K-1)
 			statBins: 0,  // reserved - number of statBins for ensemble activity histogram
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 
@@ -69,7 +69,8 @@ class RAND {
 			events: null, 	// event getter for realtime mode
 						
 			//>> outputs
-			K: 0, 		// number of states (state = [0:K-1], symbol = S[state])
+			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
+			Y: null, 	// [N] observation index
 			U: null,    // [N] states at time t
 			U0: null, 	// [N] initial states at time t = 0
 			H: null, 	// [N] next jump time
@@ -203,13 +204,17 @@ class RAND {
 
 		else  // simulation mode
 			usevector(U, function (n) {
-				var held = t - H[n];
+				var held = t - H[n];  
 				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						ran.onJump(n,fr,to,hold); 	// callback with jump info
 
 						U[ n ] = to;  			// set state
 						H[ n ] = t + hold;    // advance to next jump time: hold = 0 (exptime) in discrete (continious) time mode
+						if (obs) {
+							var gen = obs.gens[to];
+							Y[ n ] = index(quantize(gen.mvd.sample(), gen.min, gen.del, obs.dims, []));
+						}
 					});
 				}
 			});	
@@ -289,12 +294,12 @@ class RAND {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, S = this.S, cor = 0, corP = this.corP, p, NU = this.NU, NS = this.samples;
+			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, NU = this.NU, NS = this.samples;
 
-		usevector(S, function (fr) {
-			usevector(S, function (to) {
+		usevector(symbols, function (fr) {
+			usevector(symbols, function (to) {
 				p = corP[fr][to] = NU[fr][to] / NS;
-				cor += S[fr] * S[to] * p;
+				cor += symbols[fr] * symbols[to] * p;
 			});
 		});
 
@@ -621,24 +626,58 @@ class RAND {
 				ts = this.ts = 1/fs;  // sample time
 		}
 		
-		if ( !this.S ) {  // default state symbols
-			var S = this.S = vector(K);
+		if (obs = this.obs) {
+			var 
+				dims = obs.dims,
+				gens = obs.gens = new Array(K),
+				N = obs.sigmas,
+				D = dims.length;
+			
+			for (var k=0; k<K; k++) {
+				var 
+					mu = vector(D, function (i,mu) {
+						mu[i] = rand();
+					}),
+
+					sigma = matrix(D,D, function (i,j, sig) {
+					}),
+
+					gen = gens[k] = {
+						min: vector(D),
+						max: vector(D),
+						del: vector(D)
+					},	
+					min = gen.min,
+					max = gen.max,
+					del = gen.del,
+					mvd = gen.mvd = RAND.MVN( mu, sigma );
+			
+				usevector(dims, function (i, min) {
+					min[i] = mu[i] - N * sigma[i][i];
+					max[i] = mu[i] + N * sigma[i][i];
+					del[i] = dims[i] / (max[i] - min[i]);
+				});
+			}
+		}
+			
+		if ( !this.symbols ) {  // default state symbols
+			var symbols = this.symbols = vector(K);
 			
 			if (K % 2) {
-				S[0]=0;
+				symbols[0]=0;
 				for (var a=1, k=1; k<K; a++) {
-					S[k++] = a; 
-					S[k++] = -a;
+					symbols[k++] = a; 
+					symbols[k++] = -a;
 				}
 			}
 			
 			else			
 				for (var a=1, k=0; k<K; a++) {
-					S[k++] = a; 
-					S[k++] = -a;
+					symbols[k++] = a; 
+					symbols[k++] = -a;
 				}
 			
-			Log("symbols",S);
+			Log("symbols",symbols);
 		}
 
 		// allocate the ensemble
@@ -647,6 +686,7 @@ class RAND {
 			lambda = this.lambda = avgRate(this.A),
 			Tc = this.Tc = 1/lambda,				
 			UA = this.UA = vector(N),
+			Y = this.Y = vector(N),
 			NA = this.NA = matrix(K,K,0),	
 			mleP = this.mleP = matrix(K,K,0), 
 			cumH = this.cumH = matrix(K,K,0),
@@ -989,8 +1029,7 @@ function index(vec,dims) {
 }
 
 function quantize(vec,mins,dels,dims,clip) {
-	var floor = Math.floor;
-	for (var n=0, N=vec.length; n<N; n++) {
+	for (var floor = Math.floor, n=0, N=vec.length; n<N; n++) {
 		vec[n] = floor( (vec[n] - mins[n]) * dels[n] );
 		clip[n] = vec[n]<0 || vec[n] >=dims[n];
 	}
@@ -1026,7 +1065,7 @@ switch (0) {   //======== unit tests
 			//statBins: 50,
 
 			//A: [[0,1,2],[3,0,4],[5,6,0]],
-			//S: [-1,0,1],
+			//symbols: [-1,0,1],
 
 			//A: {dt: 0.04599999999999999, n: 2},  // Nq=20
 			//A: {dt: 0.09199999999999998, n: 2},  // Nq=10
@@ -1055,15 +1094,15 @@ switch (0) {   //======== unit tests
 			//P: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
 			//P: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
-			//S: [-1,1],
+			//symbols: [-1,1],
 
 			//P: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
 			//P: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
-			//S: [-1,0,1],
+			//symbols: [-1,0,1],
 			//P: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
 
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
-			//S: [-2,-1,1,2],
+			//symbols: [-2,-1,1,2],
 
 			filter: function (str, ev) {  
 				switch (ev.at) {
