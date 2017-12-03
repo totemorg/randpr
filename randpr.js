@@ -15,7 +15,8 @@ var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
 var 		// external modules
-	MATH = require("mathjs");
+	MATH = require("mathjs"),
+	GAMMA = require("gamma");
 
 var 		// totem modules					
 	ENUM = require("../enum"); 			// enumerator
@@ -32,8 +33,6 @@ class RAND {
 
 			// K-state markov inputs 
 			N: 0, 		// ensemble size
-			weights: [1,0],  // observation sigma weights (external and states) 
-			parts: [1], // state partition among grid dimensions
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
 			trP: null, 	// [KxK] from-to state tx probabilities 
 			symbols: null, 	// [K] state symbols (default = 0:K-1)
@@ -66,12 +65,12 @@ class RAND {
 			ctmode: false, 	// true=continuous false=discrete time mode 
 			batch: 20, 	// number of steps to batch before stats updated
 			
-			// realtime mode
-			events: null, 	// event getter for realtime mode
+			// reverse mode
+			events: null, 	// event getter( cb(evs) ) for reverse mode
 						
 			// outputs
 			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
-			Y: null, 	// [N] observation index
+			Y: null, 	// [N] observation at time t
 			U: null,    // [N] states at time t
 			U0: null, 	// [N] initial states at time t = 0
 			H: null, 	// [N] next jump time
@@ -87,7 +86,7 @@ class RAND {
 			cumN: null, 	// [KxK] cummulative number of from-to jumps
 			pi: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
-			obs: null, // [K] observation parameters
+			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
 			WU: null, 		// [N] wiener ensemble
 			WQ: null, 		// [N] wiener cummulative walk ensemble
@@ -171,7 +170,7 @@ class RAND {
 
 		usevector(UA,U);  // hold for NA counters
 		
-		if (evs) { // realtime mode
+		if (evs) { // reverse mode
 			if (!t) {
 				evs.each( function (i, ev) {
 					U[ ev.n ] = ev.u;
@@ -194,12 +193,12 @@ class RAND {
 					
 					U[ n ] = to;  		// set state
 					H[ n ] = t;			// hold jump time
-					Y[ n ] = obs[to].sample();  // save observation
+					Y[ n ] = obs ? obs.emP[to].sample() : 0;  // save observation
 				}
 			});
 		}
 
-		else  // simulation mode
+		else  // forward mode
 			usevector(U, function (n) {
 				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
 				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
@@ -208,7 +207,7 @@ class RAND {
 
 						U[ n ] = to;  			// set new state
 						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
-						Y[ n ] = obs[to].sample(); // save observations
+						Y[ n ] = obs ? obs[to].sample() : 0; // save observations
 						//Log(n,to,Y[n]);
 					});
 				}
@@ -258,14 +257,14 @@ class RAND {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		if ( this.events )  // realtime mode
-			this.events(this.N, this.ts, function (evs) {  
+		if ( this.events )  // reverse mode
+			this.events( function (evs) {  // maxbuf=this.N, maxstep=this.ts
 				Log("randpr feed",evs.length, evs[0].t);
 				ran.step(evs);
 				return ran.t;
 			});
 		
-		else {  // simulation mode
+		else {  // forward mode
 			this.step(); 
 			this.onBatch();
 			for (var s=1; s<this.batch; s++) this.step(); 
@@ -460,7 +459,7 @@ class RAND {
 
 		else {	// pipe in async mode
 			var
-				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (simulation or realtime mode)
+				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (forward or reverse mode)
 					objectMode: true,
 					read: function () {  // kick-start or terminate the pipe
 						Log("randpr started",ran.s);
@@ -517,10 +516,16 @@ class RAND {
 	
 		var 
 			ran = this,
-			N = this.N, 
+			N = this.N, // ensemble size
+			obs = this.obs, // emission spec
+			trP = this.trP,  // K-state spec
+			K = this.K, // K-state spec
+			alpha = this.alpha, // 2-state spec
+			p = this.p, // 2-state spec
+			symbols = this.symbols,  // state symbols
 			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
-		if ( this.events ) { // realtime process
+		if ( this.events ) { // reverse process
 			var
 				K = this.K,
 				trP = this.trP = matrix(K,K,0),  // from-to transition probs
@@ -532,13 +537,12 @@ class RAND {
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
 			
-			Log("realtime",K,trP,ts,A);
+			Log("reverse",K,trP,ts,A);
 		}
 		
 		else
-		if ( this.trP ) {  // K-state process via from-to transition probs
+		if ( trP ) {  // K-state process via from-to transition probs
 			var 
-				trP = this.trP,  // from-to transition probs
 				K = this.K = trP.length,
 				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
 				nyquist = this.nyquist,
@@ -555,7 +559,7 @@ class RAND {
 		}
 
 		else
-		if ( alpha = this.alpha )  { // two-state process via alpha,beta,nyquist
+		if ( alpha  )  { // two-state process via alpha,beta,nyquist
 			var 
 				beta = this.beta, 
 				p = alpha / (alpha + beta), 
@@ -570,7 +574,7 @@ class RAND {
 		}
 
 		else
-		if ( p = this.p )  { // two-state process via p,Tc,nyquist
+		if ( p )  { // two-state process via p,Tc,nyquist
 			var
 				Tc = this.Tc, 
 				q = 1 - p,
@@ -586,9 +590,9 @@ class RAND {
 		}
 
 		else
-		if ( K = this.K ) { // K-state process from K^2 - K random rates and nyquist
-			var 
-			 	trP = this.trP = matrix(K, K, function (fr,to,P) {
+		if ( K ) { // K-state process from K^2 - K random rates and nyquist
+			var   // to be revised with dirchlict allocation
+			 	trP = this.trP = matrix(K, K, function (fr,to,P) {  
 					P[fr][to] = rand();
 				});
 			
@@ -599,16 +603,18 @@ class RAND {
 					});
 				});
 			});
-			
-			var			
-				ts = this.ts = 1 / this.nyquist,
-				A = this.A = matrix(K, K, function (fr,to,A) {
-					A[fr][to] = (trP[fr][to] - delta(fr,to)) / ts;
-				}),
-				fs = 1/ts,
-				fb = fs / this.nyquist,
-				Tc = this.Tc = 1/fb,
-				lambda = this.lambda = 2.3/Tc;	
+
+			var
+				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
+				nyquist = this.nyquist,
+				ts = this.ts = 1/nyquist,
+				A = this.A = balanceRates( matrix(K,K, function (fr, to, A) {  // ctmode jump rates
+						A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
+					}) ),
+				pi = this.pi = vector(K, function (k,pi) {  // eq state probs
+						pi[k] = 1/R[k][k];
+					}),
+				ab = this.ab = firstAbsorbTimes(trP);			
 		}
 		
 		else { // K-state process from jump rates and nyquist
@@ -621,41 +627,43 @@ class RAND {
 				ts = this.ts = 1/fs;  // sample time
 		}
 		
-		var 
-			weights = this.weights,
-			parts = this.parts,
-			D = weights.length,
-			dims = vector( parts.length, function (n,dims) {
-				dims[n] = Math.round(parts[n] * K);
-			}),
-			grid = perms([], dims, []);
+		if ( obs ) {
+			var
+				weights = obs.weights || [1],  // D-dimensional weights to random mixing parms
+				parts = obs.parts || [1],  // D-dimensional partitions states to D-dimensional state grid
+				D = weights.length,  // dimension of grid
+				dims = obs.dims = vector( parts.length, function (n,dims) {  // grid dimensions
+					dims[n] = Math.round(parts[n] * K);
+				}),
+				grid = obs.grid = perms( [], dims, []) ; // state grid
 		
-		Log("weights=",weights,"dims=",dims,"grid=",grid);
-		this.obs = vector(K, function (k,obs) {
-			var 
-				n = 0,
-				
-				mu = vector(D, function (i,mu) {
-					mu[i] = weights[i] ? rand()*weights[i] : grid[k][n++];
-				}),
+			Log("weights=",weights,"dims=",dims,"grid=",grid);
+			obs.emP = vector(K, function (k,gens) { // gen gauss mixing (mu,sigma) parms at each grid state
+				var 
+					n = 0,
 
-				L = matrix(D,D, function (i,j, L) { // lower trianular matrix with real, positive diagonal
-					L[i][j] = (i <= j ) ? rand() : 0;
-				}),
-				
-				sigma = matrix(D,D, function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
-					var dot = 0;
-					usevector(L, function (n) {
-						dot += L[i][n] * L[j][n];
+					mu = vector(D, function (i,mu) {
+						mu[i] = weights[i] ? rand()*weights[i] : grid[k][n++];
+					}),
+
+					L = matrix(D,D, function (i,j, L) { // lower trianular matrix with real, positive diagonal
+						L[i][j] = (i <= j ) ? rand() : 0;
+					}),
+
+					sigma = matrix(D,D, function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
+						var dot = 0;
+						usevector(L, function (n) {
+							dot += L[i][n] * L[j][n];
+						});
+						A[i][j] = dot * weights[i] * weights[j]
 					});
-					A[i][j] = dot * weights[i] * weights[j]
-				});
-						
-			Log(k,mu,sigma);
-			obs[k] = RAND.MVN( mu, sigma );
-		});
-			
-		if ( !this.symbols ) {  // default state symbols
+
+				Log(k,mu,sigma);
+				gens[k] = RAND.MVN( mu, sigma );
+			});
+		}
+		
+		if ( !symbols ) {  // default state symbols
 			var symbols = this.symbols = vector(K);
 			
 			if (K % 2) {
@@ -704,12 +712,12 @@ class RAND {
 		
 		this.t = this.s = this.jumps = this.samples = 0;  // initialize process counters
 
-		if ( this.events )   // realtime process
+		if ( this.events )   // reverse process
 			usevector(U, function(n) {   
 				H[n] = U0[n] = U[n] = 0;
 			});
 		
-		else { // simulated process
+		else { // forward process
 			usevector(cumP, function (fr) {
 				cumulative( cumP[fr] );  // initialize cummulative state transition probabilties
 			});
@@ -738,7 +746,7 @@ class RAND {
 				}); 
 		}
 		
-		if (this.wiener) {  //  initialilze wiener processes
+		if ( this.wiener ) {  //  initialilze wiener processes
 			this.NRV = RAND.MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
@@ -1004,14 +1012,14 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	}
 }
 
-function perms(vec,dims,vecs) {
+function perms(vec,dims,vecs,norm) {
 
 	if (vec.length == dims.length) 
 		vecs.push(vec);
 	
 	else 
 		for (var idx = 0, max = dims[vec.length]; idx<max; idx++) 
-			perms(vec.concat(idx), dims, vecs);
+			perms(vec.concat( norm ? norm(idx,max) : idx), dims, vecs,norm);
 	
 	return vecs;
 }
@@ -1031,10 +1039,37 @@ function quantize(vec,mins,dels,dims,clip) {
 	return vec;
 }
 
+function dirich(alpha,grid,logP) {
+	var 
+		log = Math.log, exp = Math.exp,
+		K = alpha.length,
+		N = x[0].length,
+		logBs = vector(K, function (k,B) {
+			B[k] = GAMMA.log( alpha[k] );
+		}),
+		logB = sumvector(logBs) - GAMMA.log( sumvector(alpha) );
+	
+	usevector(grid, function (n,x) {
+		var
+			logAs = vector(K, function (k,A) {
+				A[k] = (alpha[k] - 1) * log( x[k] );
+			}),
+			logA = sumvector(logAs);
+	
+		logP[n] = logA - logB;
+	});
+}	
+	
 //Y[n] = index( quantize( mvd[k].sample(), emP[k].mins, ..., clip) ); until ! any(clip);
 		
-switch (3) {   //======== unit tests
-	case 0:
+switch (4.2) {   //======== unit tests
+	case 4.2:
+		Log(perms([],[2,6,4],[], function (idx,max) {
+			return idx / max;
+		}));
+		break;
+		
+	case 4.1:
 		Log(perms([],[2,6,4],[]));
 		break;
 		
@@ -1081,7 +1116,6 @@ switch (3) {   //======== unit tests
 			//trP: [[0.9,0.1],[0.1,0.9]],
 			//trP: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
 			//trP: [[0.1, 0.9], [0.3, 0.7]],
-			weights: [1,1,0,0],
 			//trP: [[0.1, 0.9], [0.4, 0.6]],
 
 			// textbook exs 
@@ -1095,8 +1129,13 @@ switch (3) {   //======== unit tests
 			//trP: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
 			//trP: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
 			//symbols: [-1,0,1],
-			trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],
-			parts: [0.5,0.5],
+			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
+			
+			K: 4,
+			obs: {
+				weights: [1,1],
+				parts: [0.5,0.5],
+			},
 
 			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
 			//symbols: [-2,-1,1,2],
@@ -1126,7 +1165,7 @@ switch (3) {   //======== unit tests
 			*/
 			
 			nyquist: 1,
-			steps: 20
+			steps: 1
 		}, 
 
 		function (ran) {
