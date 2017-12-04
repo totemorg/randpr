@@ -1062,7 +1062,7 @@ function dirich(alpha,grid,logP) {
 	
 //Y[n] = index( quantize( mvd[k].sample(), emP[k].mins, ..., clip) ); until ! any(clip);
 		
-switch (4.2) {   //======== unit tests
+switch (0) {   //======== unit tests
 	case 4.2:
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
