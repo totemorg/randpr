@@ -1,9 +1,15 @@
 'use strict';
 /**
 @requires stream
-@requires mathjs
+
 @requires enum
 
+@requires mathjs
+@requires gamma
+@requires multivariate-normal
+@requires expectation-maximization
+
+refs:
 www.statslab.cam.ac.uk/~rrw1
 www.stat.yale.edu/~pollard
 people.math.gatech.edu/~randall
@@ -26,7 +32,7 @@ var															// shortcuts
 	Each = ENUM.each,
 	Log = console.log;
 
-class RAND {
+class RAN {
 	
 	constructor(opts, cb) {
 		Copy({  // default configuration
@@ -312,7 +318,7 @@ class RAND {
 		return Tc;
 	}
 	
-	record (ev) {  // record metrics to RAND stream
+	record (ev) {  // record metrics to RAN stream
 		if (this.store) 
 			this.filter(this.store, ev,this.events);
 		
@@ -659,7 +665,7 @@ class RAND {
 					});
 
 				Log(k,mu,sigma);
-				gens[k] = RAND.MVN( mu, sigma );
+				gens[k] = RAN.MVN( mu, sigma );
 			});
 		}
 		
@@ -747,7 +753,7 @@ class RAND {
 		}
 		
 		if ( this.wiener ) {  //  initialilze wiener processes
-			this.NRV = RAND.MVN( [0], [[1]] );
+			this.NRV = RAN.MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
@@ -761,10 +767,10 @@ class RAND {
 }
 
 // share the Gauss Multivariate and its MLE 
-RAND.MVN = require("multivariate-normal").default; 
-RAND.MLE = require("expectation-maximization"); 
+RAN.MVN = require("multivariate-normal").default; 
+RAN.MLE = require("expectation-maximization"); 
 
-module.exports = RAND;
+module.exports = RAN;
 
 function STATS(statBins,N) {
 	this.statBins= statBins;
@@ -1088,7 +1094,7 @@ switch (0) {   //======== unit tests
 		break;
 		
 	case 3:
-		var ran = new RAND({
+		var ran = new RAN({
 			N: 5,
 			batch:1,
 			//wiener: 0,
