@@ -83,11 +83,11 @@ class RAN {
 			R: null, 	// [KxK] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities
-			UA: null, 	// [N] state buffer 
+			U1: null, 	// [N] state buffer 
 			mleP: null, 	// [KxK] from-to state mle tx probabilities
 			corP: null, 	// [KxK] stat correlation probabilities
 			cumP: null,	// [KxK] from-to cummulative state transition probabilities
-			NU: null, 	// [KxK] from-to samples-in-state probabilities
+			N0: null, 	// [KxK] from-to samples-in-state probabilities
 			cumH: null, 	// [KxK] cummulative time in from-to transition
 			cumN: null, 	// [KxK] cummulative number of from-to jumps
 			pi: null, 	// [K] equilibrium state probabilities 
@@ -167,14 +167,14 @@ class RAN {
 	step (evs) {  // step process forward one step
 		var 
 			ran = this,
-			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,NU=this.NU,K=this.K,
-			UA=this.UA, NA=this.NA, cumH = this.cumH, cumN = this.cumN,
+			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,N0=this.N0,K=this.K,
+			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
 			Y=this.Y, obs=this.obs,
 			t = this.t, s = this.s, N = this.N;
 		
 		this.gamma[s] = this.corr();
 
-		usevector(UA,U);  // hold for NA counters
+		usevector(U1,U);  // hold for 1-step N1 counters
 		
 		if (evs) { // reverse mode
 			if (!t) {
@@ -182,7 +182,7 @@ class RAN {
 					U[ ev.n ] = ev.u;
 				});
 				usevector(U0, U);
-				usevector(UA, U);
+				usevector(U1, U);
 			}
 				
 			evs.each(function (n,ev) {   // assume time-ordered events
@@ -220,16 +220,16 @@ class RAN {
 			});	
 
 		usevector(U, function (n) {   // adjust stat covariance from-to counters for computing correlations
-			NU[ U0[n] ][ U[n] ]++; 
+			N0[ U0[n] ][ U[n] ]++; 
 		});
 
 		usevector(U, function (n) {  // adjust 1-step joint tx counters for computing joint (not conditional) 1-step tx probs
-			NA[ UA[n] ][ U[n] ]++;
+			N1[ U1[n] ][ U[n] ]++;
 		});
 
-		//Log(UA.join(""));
+		//Log(U1.join(""));
 		//Log(U.join(""));
-		//Log(NA);
+		//Log(N1);
 		//Log(mleP);
 		//Log(this.gamma[t]);
 		
@@ -277,7 +277,7 @@ class RAN {
 		}
 		
 		var	// update activity stats
-			N0 = this.N * this.pi[0],  // average number in 0-state
+			n = this.N * this.pi[0],  // average number in 0-state
 			stats = [],
 			act = this.activity;
 
@@ -285,7 +285,7 @@ class RAN {
 
 		for (var bin=0, statBins=act.statBins; bin<statBins; bin++) {
 			var count = act.count[bin];
-			stats.push([ count, act.hist[bin], poisson(count,N0) ]);
+			stats.push([ count, act.hist[bin], poisson(count,n) ]);
 		}
 	}
 	
@@ -294,11 +294,11 @@ class RAN {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, NU = this.NU, NS = this.samples;
+			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
 
 		usevector(symbols, function (fr) {
 			usevector(symbols, function (to) {
-				p = corP[fr][to] = NU[fr][to] / NS;
+				p = corP[fr][to] = N0[fr][to] / NS;
 				cor += symbols[fr] * symbols[to] * p;
 			});
 		});
@@ -336,7 +336,7 @@ class RAN {
 			nyquist = this.nyquist,
 			Amle = this.Amle,
 			Rmle = this.Rmle,
-			NA = this.NA,
+			N1 = this.N1,
 			max = Math.max,
 			mleP = this.mleP;
 		
@@ -347,8 +347,8 @@ class RAN {
 		
 		this.lambda = avgRate(this.Amle);
 
-		usevector(NA, function (fr) {
-			sumvector(NA[fr], function (sum, N) {
+		usevector(N1, function (fr) {
+			sumvector(N1[fr], function (sum, N) {
 				usevector(mleP[fr], function (to, P) {
 					P[to] = N[to] / sum;
 				});
@@ -413,7 +413,7 @@ class RAN {
 			rel_tr_prob_error: this.Perr,
 			coherence_intervals: this.t / this.Tc,
 			mle_tr_prob: this.mleP,
-			tx_counts: this.NA
+			tx_counts: this.N1
 		};
 
 		stats.degeneracy = stats.mean_count / stats.coherence_intervals;
@@ -694,9 +694,9 @@ class RAN {
 			Amle = this.Amle = matrix(K,K),
 			lambda = this.lambda = avgRate(this.A),
 			Tc = this.Tc = 1/lambda,				
-			UA = this.UA = vector(N),
+			U1 = this.U1 = vector(N),
 			Y = this.Y = vector(N),
-			NA = this.NA = matrix(K,K,0),	
+			N1 = this.N1 = matrix(K,K,0),	
 			mleP = this.mleP = matrix(K,K,0), 
 			cumH = this.cumH = matrix(K,K,0),
 			cumN = this.cumN = matrix(K,K,0),
@@ -706,8 +706,8 @@ class RAN {
 			corP = this.corP = matrix(K,K),
 			p = 1/K,
 			Np = p * N,
-			NU = this.NU = matrix(K,K,function (fr,to,NU) {
-					NU[fr][to] = delta(fr,to) ? Np : 0
+			N0 = this.N0 = matrix(K,K,function (fr,to,N0) {
+					N0[fr][to] = delta(fr,to) ? Np : 0
 				}),
 			H = this.H = vector(N),
 			U = this.U = vector(N),
