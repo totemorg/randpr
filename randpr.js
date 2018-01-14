@@ -207,14 +207,16 @@ class RAN {
 		else  // forward mode
 			usevector(U, function (n) {
 				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
+				//Log(">>>>>",n,held);
+				
 				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						ran.onJump(n,fr,to,hold); 	// callback with jump info
 
 						U[ n ] = to;  			// set new state
 						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
-						Y[ n ] = obs ? obs[to].sample() : 0; // save observations
-						//Log(n,to,Y[n]);
+						Y[ n ] = obs ? obs.emP[to].sample() : 0; // save observations
+						//Log(">>>>>>>>",n,to,Y[n],obs);
 					});
 				}
 			});	
@@ -427,7 +429,7 @@ class RAN {
 			at: "config", t: this.t, s: this.s,
 			states: this.K,
 			ensemble_size: this.N,		
-			coherence_interval: this.steps, 
+			coherence_intervals: this.steps, 
 			sample_time: this.ts,
 			jump_rates: this.A,
 			cummulative_tr_prob: this.cumP,
@@ -704,6 +706,7 @@ class RAN {
 			Rmle = this.Rmle = matrix(K,K),
 			Perr = this.Perr = 1,
 			corP = this.corP = matrix(K,K),
+			obs=this.obs,
 			p = 1/K,
 			Np = p * N,
 			N0 = this.N0 = matrix(K,K,function (fr,to,N0) {
@@ -741,14 +744,16 @@ class RAN {
 						var fr = U0[n] = U[n] = 0;
 						H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					}
+					Y[ n ] = obs ? obs.emP[0].sample() : 0; 					
 				});
 			}
 
 			else  // initialize K-state process
 				usevector(U, function (n) {
 					var fr = floor(rand() * K);
-					U0[n] = U[n] = fr; 
-					H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+					U0[ n ] = U[n] = fr; 
+					H[ n ] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+					Y[ n ] = obs ? obs.emP[0].sample() : 0; 				
 				}); 
 		}
 		
@@ -1095,10 +1100,11 @@ switch (0) {   //======== unit tests
 		
 	case 3:
 		var ran = new RAN({
-			N: 5,
-			batch:1,
 			//wiener: 0,
-			//statBins: 50,
+
+			//legacy A configs
+			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
+			//symbols: [-2,-1,1,2],
 
 			//A: [[0,1,2],[3,0,4],[5,6,0]],
 			//symbols: [-1,0,1],
@@ -1108,7 +1114,7 @@ switch (0) {   //======== unit tests
 			//A: [[0,2], [1,0]], 
 
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> pi[k] = 1/K  eqpr)
-			//trP: [[.6, .4],[.4, .6]],
+			trP: [[.6, .4],[.4, .6]],
 			//trP: [[0.83177, 0.16822], [0.17152, 0.82848]],
 			//trP: [[.5, .5], [.5, .5]],
 			//trP: [[0.1, 0.9], [0.9, 0.1]],
@@ -1137,14 +1143,12 @@ switch (0) {   //======== unit tests
 			//symbols: [-1,0,1],
 			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 			
+			/* experimental emmision parms
 			K: 4,
 			obs: {
 				weights: [1,1],
 				parts: [0.5,0.5],
-			},
-
-			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
-			//symbols: [-2,-1,1,2],
+			},  */
 
 			filter: function (str, ev) {  
 				switch (ev.at) {
@@ -1170,8 +1174,10 @@ switch (0) {   //======== unit tests
 			K: 2,
 			*/
 			
+			N: 500,
+			batch:100,
 			nyquist: 1,
-			steps: 1
+			steps: 1000
 		}, 
 
 		function (ran) {
