@@ -17,8 +17,7 @@
   },
   "homepage": "https://github.com/acmesds/randpr#readme",
   "dependencies": {
-    "expectation-maximization": "^1.5.0",
-    "multivariate-normal": "^0.1.1",
-    "randgen": "^0.1.0"
+	  "enum": "^1.0.0",
+	  "jslab": "^1.0.0"
   }
 }

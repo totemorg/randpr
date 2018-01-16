@@ -1,13 +1,8 @@
 'use strict';
 /**
 @requires stream
-
 @requires enum
-
-@requires mathjs
-@requires gamma
-@requires multivariate-normal
-@requires expectation-maximization
+@requires jslab
 
 refs:
 www.statslab.cam.ac.uk/~rrw1
@@ -21,8 +16,9 @@ var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
 var 		// external modules
-	MATH = require("mathjs"),
-	GAMMA = require("gamma");
+	JSLAB = require("jslab"),
+	MATH = JSLAB.MATH,
+	GAMMA = JSLAB.GAMMA;
 
 var 		// totem modules					
 	ENUM = require("../enum"); 			// enumerator
@@ -772,8 +768,8 @@ class RAN {
 }
 
 // share the Gauss Multivariate and its MLE 
-RAN.MVN = require("multivariate-normal").default; 
-RAN.MLE = require("expectation-maximization"); 
+RAN.MVN = JSLAB.MVN.default; 
+RAN.MLE = JSLAB.MLE;
 
 module.exports = RAN;
 
