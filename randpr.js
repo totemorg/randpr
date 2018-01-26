@@ -21,7 +21,7 @@ var 		// external modules
 	GAMMA = JSLAB.GAMMA;
 
 var 		// totem modules					
-	ENUM = require("../enum"); 			// enumerator
+	ENUM = require("enum"); 			// enumerator
 	
 var															// shortcuts
 	Copy = ENUM.copy,
