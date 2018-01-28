@@ -16,9 +16,9 @@ var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
 var 		// external modules
-	JSLAB = require("jslab"),
-	MATH = JSLAB.MATH,
-	GAMMA = JSLAB.GAMMA;
+	JSLIB = require("jslab").libs,
+	MATH = JSLIB.MATH,
+	GAMMA = JSLIB.GAMMA;
 
 var 		// totem modules					
 	ENUM = require("enum"); 			// enumerator
@@ -67,8 +67,7 @@ class RAN {
 			ctmode: false, 	// true=continuous false=discrete time mode 
 			batch: 20, 	// number of steps to batch before stats updated
 			
-			// reverse mode
-			events: null, 	// event getter( cb(evs) ) for reverse mode
+			learn: null, 	// event learn( cb(events) ) for supervised/unsupervized learning hidden parameters
 						
 			// outputs
 			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
@@ -168,11 +167,11 @@ class RAN {
 			Y=this.Y, obs=this.obs,
 			t = this.t, s = this.s, N = this.N;
 		
-		this.gamma[s] = this.corr();
+		ran.gamma[s] = ran.corr();
 
 		usevector(U1,U);  // hold for 1-step N1 counters
 		
-		if (evs) { // reverse mode
+		if (evs) { // learning mode
 			if (!t) {
 				evs.each( function (i, ev) {
 					U[ ev.n ] = ev.u;
@@ -200,7 +199,7 @@ class RAN {
 			});
 		}
 
-		else  // forward mode
+		else  // generative mode
 			usevector(U, function (n) {
 				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
 				//Log(">>>>>",n,held);
@@ -231,12 +230,12 @@ class RAN {
 		//Log(mleP);
 		//Log(this.gamma[t]);
 		
-		if ( this.wiener ) {  // step wiener process
+		if ( ran.wiener ) {  // step wiener process
 			//Log("wsteps", this.wiener);
 			var 
-				M = this.wiener,
+				M = ran.wiener,
 				floor = Math.floor, sqrt = Math.sqrt, 
-				nrv = this.NRV.sample, WU = this.WU, WQ = this.WQ;
+				nrv = ran.NRV.sample, WU = ran.WU, WQ = ran.WQ;
 			
 			for (var n=0; n<N; n++) {				
 				for (var sum=WQ[n], j=1, J=floor(M*t); j<=J; j++) sum += nrv()[0];
@@ -245,8 +244,8 @@ class RAN {
 			}
 		}
 		
-		this.onStep();
-		this.t+= this.ts; this.s++;
+		ran.onStep();
+		ran.t+= ran.ts; ran.s++;
 	}
 		
 	start ( ) {	  // advance process this.batch steps with batch() and end() callbacks
@@ -261,23 +260,26 @@ class RAN {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		if ( this.events )  // reverse mode
-			this.events( function (evs) {  // maxbuf=this.N, maxstep=this.ts
+		if ( ran.learn )  { // learning hidden parameters
+			if (!ran.halt)
+			ran.learn( function (evs) {  // get batch of events
 				Log("randpr feed",evs.length, evs[0].t);
 				ran.step(evs);
 				return ran.t;
 			});
+			ran.halt = true;
+		}
 		
-		else {  // forward mode
-			this.step(); 
-			this.onBatch();
-			for (var s=1; s<this.batch; s++) this.step(); 
+		else {  // generative mode
+			ran.step(); 
+			ran.onBatch();
+			for (var s=1; s<ran.batch; s++) ran.step(); 
 		}
 		
 		var	// update activity stats
-			n = this.N * this.pi[0],  // average number in 0-state
+			n = ran.N * ran.pi[0],  // average number in 0-state
 			stats = [],
-			act = this.activity;
+			act = ran.activity;
 
 		act.norm();
 
@@ -318,7 +320,7 @@ class RAN {
 	
 	record (ev) {  // record metrics to RAN stream
 		if (this.store) 
-			this.filter(this.store, ev,this.events);
+			this.filter(this.store, ev, this.learn);
 		
 		else
 			this.ranStream.push(ev);
@@ -441,16 +443,16 @@ class RAN {
 		});
 	}
 	
-	pipe(sinkStream, cb) {  // sink onEvents to sinkStream or to callback cb(onEvents)
+	pipe(sinkStream, cb) {  // sync/async pipe of events to a sink stream or to a callback cb(events)
 		
-		if ( this.store ) {  // pipe in sync mode
-			while (this.s < this.steps) this.start( );
-			this.end();
+		if ( this.store ) {  // use supplied store to sync pipe process
+			while (this.s < this.steps) this.start( );  // start process
+			this.end();  // terminate process
 			
-			if (cb)
+			if (cb)  // pipe events to callback
 				cb( this.store );
 			
-			else {
+			else { // pipe events to sink stream
 				var n=0, evStream = new STREAM.Readable({
 					read: function () {
 						this.push( this.store[n++] || null );
@@ -463,7 +465,7 @@ class RAN {
 
 		else {	// pipe in async mode
 			var
-				ranStream = new STREAM.Readable({  // 1st stage kick-starts pipe (forward or reverse mode)
+				ranStream = new STREAM.Readable({  // 1st stage to kick-start generative/learning pipe
 					objectMode: true,
 					read: function () {  // kick-start or terminate the pipe
 						Log("randpr started",ran.s);
@@ -482,7 +484,7 @@ class RAN {
 					writableObjectMode: true,
 					readableObjectMode: true,
 					transform: function (ev,en,cb) {
-						ran.filter(this,ev,this.events);
+						ran.filter(this,ev,this.learn);
 						cb(null);
 					}
 				}),
@@ -495,8 +497,8 @@ class RAN {
 					}
 				});
 
-			if (cb) {  // stream onEvents to callback
-				var cbStream = new STREAM.Writable({
+			if (cb) {  // pipe events to callback
+				var evStream = new STREAM.Writable({
 					objectMode: true,
 					write: function (ev,en,cb) {
 						sinkStream.push(ev);
@@ -504,12 +506,12 @@ class RAN {
 					}
 				});
 
-				ranStream.pipe(editStream).pipe(cbStream).on("finish", function () {
+				ranStream.pipe(editStream).pipe(evStream).on("finish", function () {
 					cb(sinkStream);
 				});
 			}
 
-			else  // stream onEvents to target stream
+			else  // stream events to sink stream
 				ranStream.pipe(editStream).pipe(charStream).pipe(sinkStream);
 		}
 	}
@@ -529,7 +531,7 @@ class RAN {
 			symbols = this.symbols,  // state symbols
 			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
 
-		if ( this.events ) { // reverse process
+		if ( this.learn ) { // learning hidden parameters
 			var
 				K = this.K,
 				trP = this.trP = matrix(K,K,0),  // from-to transition probs
@@ -541,7 +543,7 @@ class RAN {
 				pi = this.pi = vector(K,0),
 				A = this.A = matrix(K,K,0);
 			
-			Log("reverse",K,trP,ts,A);
+			Log("learning",K,trP,ts,A);
 		}
 		
 		else
@@ -717,12 +719,12 @@ class RAN {
 		
 		this.t = this.s = this.jumps = this.samples = 0;  // initialize process counters
 
-		if ( this.events )   // reverse process
+		if ( this.learn )   // learning hidden parameters
 			usevector(U, function(n) {   
 				H[n] = U0[n] = U[n] = 0;
 			});
 		
-		else { // forward process
+		else { // generate process
 			usevector(cumP, function (fr) {
 				cumulative( cumP[fr] );  // initialize cummulative state transition probabilties
 			});
@@ -768,8 +770,8 @@ class RAN {
 }
 
 // share the Gauss Multivariate and its MLE 
-RAN.MVN = JSLAB.MVN.default; 
-RAN.MLE = JSLAB.MLE;
+RAN.MVN = JSLIB.MVN.default; 
+RAN.MLE = JSLIB.MLE;
 
 module.exports = RAN;
 
