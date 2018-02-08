@@ -260,13 +260,16 @@ class RAN {
 			return exp( m*log(a) - a - sum );	
 		}
 
+		//Log("rand start", ran.halt, ran.steps, ran.N);
+		
 		if ( ran.learn )  { // learning hidden parameters
 			if (!ran.halt)
-			ran.learn( function (evs) {  // get batch of events
-				Log("randpr feed",evs.length, evs[0].t);
-				ran.step(evs);
-				return ran.t;
-			});
+				ran.learn( function (evs) {  // get batch of events
+					Log("randpr feed",evs.length, evs[0].t);
+					ran.step(evs);
+					return ran.t;
+				});
+			
 			ran.halt = true;
 		}
 		
