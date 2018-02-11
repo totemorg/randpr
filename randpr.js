@@ -508,9 +508,24 @@ class RAN {
 			return exp( m*log(a) - a - sum );	
 		}
 
-		ran.step(); 
-		ran.onBatch();
-		for (var s=1; s<ran.batch; s++) ran.step(); 
+		//Log("rand start", ran.halt, ran.steps, ran.N);
+		
+		if ( ran.learn )  { // learning hidden parameters
+			if (!ran.halt)
+				ran.learn( function (evs) {  // get batch of events
+					Log("randpr feed",evs.length, evs[0].t);
+					ran.step(evs);
+					return ran.t;
+				});
+			
+			ran.halt = true;
+		}
+		
+		else {  // generative mode
+			ran.step(); 
+			ran.onBatch();
+			for (var s=1; s<ran.batch; s++) ran.step(); 
+		}
 		
 		if (false) {
 			var	// update activity stats
