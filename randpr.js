@@ -400,11 +400,11 @@ class RAN {
 			J = this.J,
 			jumps = this.jumps = vector(max(J)+1, 0);
 			
-		use(jumps, function (n) {
+		use(J, function (n) {
 			jumps[ J[n] ]++;
 		});
 		
-		countStats(jumps, this.t, cb);	
+		countStats(jumps, this.t, this.N, cb);	
 	}
 		
 	step (evs) {  // advance process forward one step
@@ -1116,7 +1116,7 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	});
 }	
 
-function countStats(counts, T, cb) {
+function countStats(H, T, N, cb) {
 	function logNegBin(logNB, logG, Kbar, M) {
 		var 
 			log = Math.log,
@@ -1137,39 +1137,42 @@ function countStats(counts, T, cb) {
 		});
 	}
 
-	function xiSquared(p, p0) {
-		var xisq = 0, err = 0;
+	function chiSquared(p, M, N) {
+		var chiSq = 0, err = 0;
 		use(p, function (k) {
-			err = p[k] - p0[k];
-			xisq += err * err;
+			err = M[k] - N*p[k];
+			chiSq += (err * err) / (N*p[k]);
 		});
-		return xisq;
+		return chiSq;
 	}
 
 	var
-		Kmax = counts.length,
-		Mmax = 50,
+		Kmax = H.length,
+		Mmax = 200,
 		Kbar = 0,
-		minXiSq = 1e99,
+		chiSqMin = 1e99,
 		Mbest = 1,
 		logG = vector(Kmax+Mmax , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
 		}),
-		pRef = vector(Kmax),
-		pK = counts;
-	
-	use(pK, function (k) {
-		pK[k] /= Kmax;  // norm to make a prob distrib
-		Kbar += k*pK[k];
+		pRef = vector(Kmax);
+
+	use(H, function (k) {
+		Kbar += k * H[k];
 	});
-	
-	Log("Kbar", Kbar);
-	for (var M=15; M<25; M++) {
-		NegBin(pRef, logG, Kbar, M);
-		var XiSq = xiSquared(pRef, pK);
-		Log(M, XiSq);
+	Kbar /= N;
 		
-		if (XiSq < minXiSq) Mbest = M;
+	Log("Kbar=", Kbar, T, N);
+	
+	for (var M=15; M<200; M+=5) {
+		NegBin(pRef, logG, Kbar, M);
+		var chiSq = chiSquared(pRef, H, N);
+		Log(M, chiSq, sum(pRef) );
+		
+		if (chiSq < chiSqMin) {
+			Mbest = M;
+			chiSqMin = chiSq;
+		}
 	} 
 	
 	cb({
@@ -1285,8 +1288,8 @@ switch (3) {
 			K: 2,
 			*/
 			
-			N: 100,
-			batch: 20,
+			N: 1000,
+			batch: 50,
 			nyquist: 1,
 			steps: 200
 		}, 
