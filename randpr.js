@@ -33,34 +33,31 @@ class RAN {
 	constructor(opts, cb) {
 		Copy({  // default configuration
 
-			// K-state markov config parameters
 			N: 0, 		// ensemble size
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
-			trP: null, 	// [KxK] from-to state tx probabilities 
 			symbols: null, 	// [K] state symbols (default = 0:K-1)
-			statBins: 0,  // reserved - number of statBins for ensemble activity histogram
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
+			store: null,   // [] for sync pipe() or null for async pipe()			
+			nyquist: 1, // nyquist oversampling rate = 1/dt
+			steps: 10, // number of process steps of size dt
+			ctmode: false, 	// true=continuous, false=discrete time mode 
+			batch: 20, 	// number of steps before running stats are updated
+			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
+						
+			// K-state config parameters
+			trP: null, 	// [KxK] from-to state tx probabilities 
 
-			// two-state markov config parameters
+			// K=2 state config parameters
 			alpha: 0,  // on-to-off rate [jumps/s]
 			beta: 0,  // off-to-on rate [jumps/s]
 			p: 0,  // on state probability
 			q: 0,  // off(not on) state probability
 
-			// sampling
+			// event filtering: ev.at = step | config | end | batch | end | ...
 			filter: function (str,ev) {  // append event ev to store/stream str
-				str.push( ev );
+				str.push( ev ); 
 			},
 
-			store: null,   // [] for sync pipe() or null for async pipe()
-			
-			nyquist: 1, // nyquist oversampling rate = 1/dt
-			steps: 10, // number of process steps of size dt
-			ctmode: false, 	// true=continuous false=discrete time mode 
-			batch: 20, 	// number of steps before running stats are updated
-			
-			learn: null, 	// data getter( cb(events) ) when learning with callback cb(event) or cb(null) at end
-						
 			// internal variables
 			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
 			Y: null, 	// [N] observation at time t
@@ -69,6 +66,9 @@ class RAN {
 			U1: null, 	// [N] state buffer 
 			J: null,  // [N] jump counter
 			H: null, 	// [N] next jump time
+			WU: null, 		// [N] wiener/SFI ensemble
+			WQ: null, 		// [N] wiener/SFI ensemble for cummulative walks
+			
 			R: null, 	// [KxK] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities K' <= K
@@ -83,16 +83,13 @@ class RAN {
 			A: null,	// [KxK] jump rates
 			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
-			WU: null, 		// [N] wiener ensemble
-			WQ: null, 		// [N] wiener cummulative walk ensemble
-			
 			next: 0, 	// next time step to evaluate batch 
 			Tc: 0,  // coherence time >0 [s] 
 			t: 0, 	// time
 			s: 0, 	// step number
 			dt: 1, 	// sample time = 1/nyquist
-			jumps: null, // [maxJumps] distribution of state jumps
-			samples: 0 // number of elements scanned
+			jumps: null, // [maxJumps] distribution of state jumps for event counting
+			samples: 0 // number of ensemble members sampled
 		}, this);
 
 		if (opts) Copy(opts, this);
@@ -339,9 +336,7 @@ class RAN {
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
-		this.activity = new STATS(this.statBins,N);  // initialize ensemble stats
-		
-		this.gamma = vector(this.steps, 0);  // statistical autocovariance ensemble averaged
+		this.gamma = vector(this.steps, 0);  // reserve statistical autocovariance
 
 		if (cb) cb(this);
 	}
@@ -510,7 +505,7 @@ class RAN {
 
 		//Log("rand start", ran.halt, ran.steps, ran.N);
 		
-		if ( ran.learn )  { // learning hidden parameters
+		if ( ran.learn )  { // learning mode
 			if (!ran.halt)
 				ran.learn( function (evs) {  // get batch of events
 					Log("randpr feed",evs.length, evs[0].t);
@@ -527,19 +522,6 @@ class RAN {
 			for (var s=1; s<ran.batch; s++) ran.step(); 
 		}
 		
-		if (false) {
-			var	// update activity stats
-				n = ran.N * ran.pi[0],  // average number in 0-state
-				stats = [],
-				act = ran.activity;
-
-			act.norm();
-
-			for (var bin=0, statBins=act.statBins; bin<statBins; bin++) {
-				var count = act.count[bin];
-				stats.push([ count, act.hist[bin], poisson(count,n) ]);
-			}
-		}
 	}
 	
 	statCorr ( ) {  // statistical correlation function
@@ -556,17 +538,16 @@ class RAN {
 			});
 		});
 
-		if ( this.s <= 1 ) 
-			this.gamma0 = cor;
+		//if ( this.s <= 1 ) this.gamma0 = cor;
 
-		return cor / this.gamma0;
+		return cor ; // /this.gamma0;
 	}
 
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
 		var abs = Math.abs;
-		for (var n=1, N = this.s, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]);
+		for (var n=1, N = this.s, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]) * (1 - n/N);
 		
-		this.Tc = Tc * this.dt;
+		this.Tc = Tc * this.dt / 2;
 		//Log("tc calc",N, Tc, this.gamma);
 	}
 	
@@ -596,14 +577,14 @@ class RAN {
 			max = Math.max,
 			mleP = this.mleP;
 		
-		usematrix(Rmle, function (fr,to) {   // estimate the jump rates using cummulative H[fr][to] times and cummulative N[fr][to] jump counts
+		usematrix(Rmle, function (fr,to) {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
 			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
 			Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
 		
 		//this.lambda = avgRate(this.Amle);
 
-		use(N1, function (fr) {  // estimate the tx probs using current N1 counts
+		use(N1, function (fr) {  // estimate transition probs using the 1-step state transition counts
 			sum(N1[fr], function (sum, N) {
 				use(mleP[fr], function (to, P) {
 					P[to] = N[to] / sum;
@@ -669,8 +650,8 @@ class RAN {
 				jump_rates: ran.Amle, 
 				mean_lambda: lambda, //ran.lambda,
 				degeneracy_param: delta,
-				end_corr: ran.gamma[ran.s-1],
-				lag0_corr: ran.gamma0,
+				end_corr: ran.gamma,
+				//lag0_corr: ran.gamma0,
 				mean_count: Kbar, // ran.lambda * ran.t,
 				mle_holding_times: ran.Rmle,
 				rel_tr_prob_error: ran.Perr,
@@ -807,6 +788,7 @@ RAN.MLE = JSLIB.MLE;
 
 module.exports = RAN;
 
+/*
 function STATS(statBins,N) {
 	this.statBins= statBins;
 	this.dbins= (statBins-1) / N;
@@ -820,11 +802,11 @@ function STATS(statBins,N) {
 			H[bin] = Math.round(cnt += del);
 		});
 
-	/*
+	/ *
 	for (var cnt=1,bin=0; bin<statBins; bin++, cnt+=this.dcounts) {
 		hist[bin] = 0;
 		count[bin] = Math.round(cnt);
-	}*/
+	} * /
 }	
 	
 STATS.prototype.add = function (val) {
@@ -835,6 +817,7 @@ STATS.prototype.add = function (val) {
 STATS.prototype.norm = function () {
 	for (var bin=0, hist=this.hist, statBins=this.statBins; bin<statBins; bin++) hist[bin] /= this.samples * this.dcounts;
 }
+*/
 
 function expdev(mean) {
 	return -mean * Math.log(Math.random());
@@ -1080,13 +1063,16 @@ function perms(vec,dims,vecs,norm) {  //< generate permutations
 	return vecs;
 }
 
+/*
 function index(vec,dims) {  // unused
 	var idx = 0;
 	for (var off=1, n=0, N=dims.length; n<N; n++, idx += vec[N-n]*off, off*=dims[N-n] );
 		
 	return idx;
 }
+*/
 
+/*
 function quantize(vec,mins,dels,dims,clip) {  //< unused
 	for (var floor = Math.floor, n=0, N=vec.length; n<N; n++) {
 		vec[n] = floor( (vec[n] - mins[n]) * dels[n] );
@@ -1094,6 +1080,7 @@ function quantize(vec,mins,dels,dims,clip) {  //< unused
 	}
 	return vec;
 }
+*/
 
 function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	var 
@@ -1167,7 +1154,16 @@ function countStats(H, T, N, cb) {
 	for (var M=15; M<200; M+=5) {
 		NegBin(pRef, logG, Kbar, M);
 		var chiSq = chiSquared(pRef, H, N);
+		
 		Log(M, chiSq, sum(pRef) );
+		
+		if (M == 75) {
+			var x = [];
+			pRef.each( function (n,p) {
+				x.push([ n, p*N, H[n] ]);
+			});
+			Log(x);
+		}
 		
 		if (chiSq < chiSqMin) {
 			Mbest = M;
@@ -1186,7 +1182,7 @@ function countStats(H, T, N, cb) {
 }
 
 //======== unit tests
-switch (3) {
+switch (0) {
 	case 4.2:
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
