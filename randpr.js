@@ -645,22 +645,23 @@ class RAN {
 		this.jumpStats( function (stats) {
 			ran.record({
 				at:"end", t:ran.t, s:ran.s,
-				obs_time: T,
-				coherence_time: Tc, 
-				jump_rates: ran.Amle, 
-				mean_lambda: lambda, //ran.lambda,
-				degeneracy_param: delta,
-				end_corr: ran.gamma,
-				//lag0_corr: ran.gamma0,
-				mean_count: Kbar, // ran.lambda * ran.t,
-				mle_holding_times: ran.Rmle,
-				rel_tr_prob_error: ran.Perr,
-				coherence_intervals: M,
-				mle_tr_prob: ran.mleP,
-				count_stats: stats,
-				//jump_stats: ran.jumps,
-				tx_counts: ran.N1,
-				snr: Math.sqrt( Kbar / (1 + delta ) )
+				supervised: {
+					jump_rates: ran.Amle, 
+					stat_corr: ran.gamma,
+					mle_holding_times: ran.Rmle,
+					rel_tr_prob_error: ran.Perr,
+					mle_tr_prob: ran.mleP,
+					tx_counts: ran.N1
+				},
+				unsupervised: {
+					mean_count: Kbar, 
+					coherence_time: Tc, 
+					coherence_intervals: M,
+					mean_lambda: lambda, 
+					degeneracy_param: delta,
+					count_stats: stats,
+					snr: Math.sqrt( Kbar / (1 + delta ) )
+				}
 			});
 		});
 	}
