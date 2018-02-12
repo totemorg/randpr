@@ -651,17 +651,16 @@ class RAN {
 					mle_holding_times: ran.Rmle,
 					rel_tr_prob_error: ran.Perr,
 					mle_tr_prob: ran.mleP,
-					tx_counts: ran.N1
-				},
-				unsupervised: {
+					tx_counts: ran.N1,
 					mean_count: Kbar, 
 					coherence_time: Tc, 
 					coherence_intervals: M,
-					mean_lambda: lambda, 
+					mean_rate: lambda, 
 					degeneracy_param: delta,
 					count_stats: stats,
 					snr: Math.sqrt( Kbar / (1 + delta ) )
-				}
+				},
+				unsupervised: stats
 			});
 		});
 	}
