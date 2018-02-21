@@ -657,7 +657,6 @@ class RAN {
 					coherence_intervals: M,
 					mean_rate: lambda, 
 					degeneracy_param: delta,
-					count_stats: stats,
 					snr: Math.sqrt( Kbar / (1 + delta ) )
 				},
 				unsupervised: stats
