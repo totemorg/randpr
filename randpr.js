@@ -18,7 +18,8 @@ var			// nodejs modules
 var 		// external modules
 	JSLIB = require("jslab").libs,
 	MATH = JSLIB.MATH,
-	GAMMA = JSLIB.GAMMA;
+	GAMMA = JSLIB.GAMMA,
+	NEWRAP = JSLIB.NEWRAP;
 
 var 		// totem modules					
 	ENUM = require("enum"); 			// enumerator
@@ -1132,6 +1133,23 @@ function countStats(H, T, N, cb) {
 		return chiSq;
 	}
 
+	function NewtonRapson() {
+		
+		function f(a,k,x) {
+			/*
+			  g = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
+			  f = g'
+			  fprimef' = g"
+			 */
+
+			return (1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1))*gamma(k + x)/gamma(x) - (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma(k + x)*polygamma(0, x)/gamma(x) + (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma(k + x)*polygamma(0, k + x)/gamma(x) - k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma(k + x)/(a*(1 + x/a)*gamma(x))
+		}
+
+		function fprime(a,k,x) {
+			return (1 + x/a)**(-k)*(a/x + 1)**(-x)*(a**2/(x**3*(a/x + 1)**2) + (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, x) + 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) + polygamma(0, x)**2 - 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) - 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) - 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
+		}
+	}
+	
 	var
 		Kmax = H.length,
 		Mmax = 200,
