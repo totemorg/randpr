@@ -19,7 +19,8 @@ var 		// external modules
 	JSLIB = require("jslab").libs,
 	MATH = JSLIB.MATH,
 	GAMMA = JSLIB.GAMMA,
-	NEWRAP = JSLIB.NEWRAP;
+	NEWRAP = JSLIB.NEWRAP,
+	ZETA = JSLIB.ZETA;
 
 var 		// totem modules					
 	ENUM = require("enum"); 			// enumerator
@@ -1137,10 +1138,6 @@ function countStats(H, T, N, cb) {
 		return chiSq;
 	}
 
-	function polygamma(n,x) {
-		return 1;
-	}
-
 	function p0(a,k,x) {
 		/*
 		  a = <k> = avg count, x = script M = coherence intervals, k = frequency
@@ -1149,45 +1146,61 @@ function countStats(H, T, N, cb) {
 		var
 			ax1 =  1 + a/x,
 			xa1 = 1 + x/a,
-			xak = xa1**(-k),
-			axx = ax1**(-x),
-			gx = Gamma[x],
-			gkx = Gamma[k + x],
-			logp0 = log(gkx) - log(gx) + log(axx) + log(xak);
+			//xak = xa1**(-k),
+			//axx = ax1**(-x),
+			//gx = Gamma[x],
+			//gkx = Gamma[k + x],
+			logGx = logGamma[ floor(x) ],
+			logGkx = logGamma[ floor(k + x) ],
+			logGk1 = logGamma[ floor(k + 1) ],
+			logp0 = logGkx - logGk1 - logGx - x*log(ax1) - k*log(xa1);
 
 		// p0 = gkx/gx * axx * xak;
-		Log("p0",a,k,x,logp0);
+		//Log("logp0",a,k,x,logp0, pRef[k]);
 		return exp( logp0 );
 	}
 
 	function p1(a,k,x) {
 		/*
 		  a = <k> = avg count, x = script M = coherence intervals, k = frequency
-		  p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
-		  return p' = 
-					(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) 
-						- log(a/x + 1))*gamma[k + x]/gamma[x] 
+		  p = negbin(a,k,x) = (gamma(k+x)/gamma(x)) * (1+a/x)**(-x) * (1+x/a)**(-k)
+		  p'(x) = 
+					(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
 						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
 						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
-						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			  
+						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
+
+				=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
+						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
+						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
+						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
+
+				=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
+						(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
+
+				= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+
+				= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+
+			Psi(x) = polyGamma(0,x)
 		 */
 		var
 			ax1 =  1 + a/x,
 			xa1 = 1 + x/a,
-			xak = xa1**(-k),
-			axx = ax1**(-x),
-			gx = Gamma[x],
-			gkx = Gamma[k + x],
-			logax1 = log(ax1),
-			xax1 = x*ax1,
-			axa1 = a*xa1,
-			pg0x = Psi[x], //polygamma(0, x),
-			pg0kx = Psi[k + x], //polygamma(0, k + x),
-			p1 = xak*axx*( a/xax1 - logax1 )*gkx/gx - xak*axx*gkx*pg0x/gx + xak*axx*gkx*pg0kx/gx - k*xak*axx*gkx/( axa1*gx ) ;
+			//xak = xa1**(-k),
+			//axx = ax1**(-x),
+			logGx = logGamma[ floor(x) ],
+			logGkx = logGamma[ floor(k + x) ],
+			logGk1 = logGamma[ floor(k + 1) ],
+			psix = Psi[ floor(x) ], 
+			psikx = Psi[ floor(k + x) ], 
+			logp0 = logGkx - logGk1 - logGx - x*log(ax1) - k*log(xa1),
+			arg = (a/x - k/a)/ax1 - log(ax1) + psikx - psix,
+			p1 = exp(logp0) * arg;
 		
-		//Log("p1",a,k,x,p1);
+		//Log("p1",a,k,x,logp0, psikx, psix, arg, p1);
 
-		return p1;
+		return exp( p1 );
 	}
 
 	function p2(a,k,x) {
@@ -1229,22 +1242,22 @@ function countStats(H, T, N, cb) {
 		var 
 			sum = 0,
 			a = Kbar,
-			N = Kmax;
+			f = pH;
 
-		for (var k=1; k<N; k++) sum += (( p0(a,k,x) - H[k] ) / eps[k]**2 ) * p1(a,k,x);
+		for (var k=1; k<Kmax; k++) sum += ( p0(a,k,x) - pH[k] ) * p1(a,k,x);
 
-		Log("g0",a,x,N,sum);
+		Log("g0",a,x,Kmax,sum);
 		return sum;
 	}
 
 	function g1(x) {
 		var
 			sum =0,
-			a = Kbar,
-			N = Kmax;
+			a = Kbar;
 
-		for (var k=1; k<N; k++) sum += ( p1(a,k,x) / eps[k] )**2;
+		for (var k=1; k<Kmax; k++) sum += p1(a,k,x) ** 2;
 
+		Log("g1",a,x,Kmax,sum);
 		return 2*sum;
 	}
 	
@@ -1256,7 +1269,8 @@ function countStats(H, T, N, cb) {
 		Mbest = 1,
 		log = Math.log,	
 		exp = Math.exp,
-		eps = $(Kmax, 0.1),
+		floor = Math.floor,
+		eps = $(Kmax, 1),
 		Ktop = Kmax + Mmax,
 		logGamma = $(Ktop , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
@@ -1264,8 +1278,15 @@ function countStats(H, T, N, cb) {
 		Gamma = $(Ktop, function (k,G) {
 			G[k] = exp( logGamma[k] );
 		}),
-		Psi = $(Ktop, function (k, P) {
-			P[k] = polyGamma(0,k);
+		Zeta = $(Ktop, function (k,Z) {
+			Z[k] = k ? ZETA(k+1) : -0.57721566490153286060; // -Z[0] = euler-masheroni constant
+		}),
+		pH = $(Kmax, function (k, p) {
+			p[k] = H[k] / N;
+		}),
+		Psi1 = $sum(Zeta),
+		Psi = $(Ktop, function (x, P) {  // recurrence to build the diGamma Psi
+			P[x] = x ? P[x-1] + 1/x : Psi1;
 		}),
 		pRef = $(Kmax);
 
@@ -1276,11 +1297,17 @@ function countStats(H, T, N, cb) {
 		
 	Log("Kbar=", Kbar, T, N);
 	
-	var
-		M0 = 75,
-		M = NEWRAP( g0, g1, M0);  // newton-raphson search
+	if (true) {
+		var
+			M0 = 20,
+			a = Kbar;
+		
+		// logNegBin(pRef, logGamma, a, M0);  // for debugging p0
+		
+		var M = NEWRAP( g0, g1, M0);  // newton-raphson search
 
-	Log("newrap M=",M);
+		Log("newrap M=",M);
+	}
 	
 	if (false) 
 		for (var M=15; M<200; M+=5) {  // brute force search
@@ -1289,7 +1316,7 @@ function countStats(H, T, N, cb) {
 
 			Log(M, chiSq, $sum(pRef) );
 
-			if (M == 75) {
+			if (M == -75) {
 				var x = [];
 				pRef.each( function (n,p) {
 					x.push([ n, p*N, H[n] ]);
