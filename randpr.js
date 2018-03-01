@@ -1341,7 +1341,7 @@ function countStats(H, T, N, cb) {
 }
 
 //======== unit tests
-switch (3) {
+switch (0) {
 	case 4.2:
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
