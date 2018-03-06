@@ -86,6 +86,16 @@ class RAN {
 			A: null,	// [KxK] jump rates
 			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
+			// unsupervised learning
+			solve: null,   // count stats parms
+			/* {
+				compress: true,
+				interpolate: false,
+				lma: [50]
+				// bfs: [5,200,5]
+				// lfa: [50]
+			}, */
+			
 			next: 0, 	// next time step to evaluate batch 
 			Tc: 0,  // coherence time >0 [s] 
 			t: 0, 	// time
@@ -393,7 +403,7 @@ class RAN {
 		this.onEnd();
 	}
 	
-	jumpStats(cb) {
+	jumpStats(solve, cb) {
 		var 
 			J = this.J,
 			jumps = this.jumps = $(max(J)+1, 0);
@@ -402,7 +412,7 @@ class RAN {
 			jumps[ J[n] ]++;
 		});
 		
-		countStats(jumps, this.t, this.N, cb);	
+		countStats(jumps, this.t, this.N, solve, cb);	
 	}
 		
 	step (evs) {  // advance process forward one step
@@ -645,7 +655,29 @@ class RAN {
 			M = T / Tc,
 			delta = Kbar / M;
 
-		this.jumpStats( function (stats) {
+		if (this.solve)
+			this.jumpStats( this.solve, function (stats) {
+				ran.record({
+					at:"end", t:ran.t, s:ran.s,
+					supervised: {
+						jump_rates: ran.Amle, 
+						stat_corr: ran.gamma,
+						mle_holding_times: ran.Rmle,
+						rel_tr_prob_error: ran.Perr,
+						mle_tr_prob: ran.mleP,
+						tx_counts: ran.N1,
+						mean_count: Kbar, 
+						coherence_time: Tc, 
+						coherence_intervals: M,
+						mean_rate: lambda, 
+						degeneracy_param: delta,
+						snr: Math.sqrt( Kbar / (1 + delta ) )
+					},
+					unsupervised: stats
+				});
+			});
+		
+		else
 			ran.record({
 				at:"end", t:ran.t, s:ran.s,
 				supervised: {
@@ -661,10 +693,9 @@ class RAN {
 					mean_rate: lambda, 
 					degeneracy_param: delta,
 					snr: Math.sqrt( Kbar / (1 + delta ) )
-				},
-				unsupervised: stats
+				}
 			});
-		});
+			
 	}
 
 	onConfig() {
@@ -1105,301 +1136,373 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	});
 }	
 
-function countStats(H, T, N, cb) {
+function countStats(H, T, N, solve, cb) {
 	/*
-		H[k] = observation freqs at count level k
-		T = observation time
-		N = number of observations
-		callback cb(computed stats)
+		returns M = number of coherence intervals, SNR, etc given
+			H[k] = observation freqs at count level k
+			T = observation time
+			N = number of observations
+			solve = {compress: true/false, interpolate: true/false, lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
+			callback cb(computed stats)
 	*/
 	
-	function logNegBin(logNB, logG, Kbar, M) {
-		var 
-			logMK1 = log(1 + M / Kbar),
-			logKM1 = log(1 + Kbar / M);
-
-		$use(logNB, function (k) {
-			logNB[k] = logG[k+M] - logG[k+1] - logG[M] - k*logMK1 - M*logKM1;
-		});
-	}
-
-	function NegBin(NB, logG, Kbar, M) {
-		logNegBin(NB, logG, Kbar, M);
-		$use(NB, function (k) {
-			NB[k] = exp( NB[k] );
-		});
-	}
-
-	function chiSquared(p, M, N) {
-		var chiSq = 0, err = 0;
-		$use(p, function (k) {
-			err = M[k] - N*p[k];
-			chiSq += (err * err) / (N*p[k]);
-		});
-		return chiSq;
-	}
-
-	function p0(a,k,x) {
+	function logNB(k,a,x) { // negative binomial objective function
 		/*
-		  a = <k> = avg count, x = script M = coherence intervals, k = frequency
-		  return p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
+		return log{ p0 } where
+			p0(x) = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k) 
+			a = <k> = avg count
+			x = script M = coherence intervals
+			k = count level
 		 */
 		var
 			ax1 =  1 + a/x,
 			xa1 = 1 + x/a,
-			//xak = xa1**(-k),
-			//axx = ax1**(-x),
-			//gx = Gamma[x],
-			//gkx = Gamma[k + x],
-			logGx = logGamma[ floor(x) ],
-			logGkx = logGamma[ floor(k + x) ],
-			logGk1 = logGamma[ floor(k + 1) ],
-			logp0 = logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 
-		// p0 = gkx/gx * axx * xak;
-		return exp( logp0 );
+			// slower log Gamma works with optimizers
+			logGx = GAMMA.log(x),
+			logGkx = GAMMA.log(k+x), 
+			logGk1 = GAMMA.log(k+1);
+
+			// indexed log Gamma faster, but produces round-off errors that cause optimizers to fail
+			// logGx = logGamma[ floor(x) ],
+			// logGkx = logGamma[ floor(k + x) ],
+			// logGk1 = logGamma[ floor(k + 1) ];
+
+		return logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 	}
+	
+	function LFA(init, f, logp) {  // 1-parameter linear-factor analysis
+		function p1(k,a,x) { 
+			/*
+			return p0'(x) =
+						(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
+							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
+							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
+							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
 
-	function p1(a,k,x) {
-		/*
-		  a = <k> = avg count, x = script M = coherence intervals, k = frequency
-		  p = negbin(a,k,x) = (gamma(k+x)/gamma(x)) * (1+a/x)**(-x) * (1+x/a)**(-k)
-		  p'(x) = 
-					(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
-						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
-						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
-						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
+					=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
+							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
+							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
+							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
 
-				=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
-						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
-						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
-						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
+					=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
+							(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
 
-				=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
-						(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
+					= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
 
-				= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+					= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
 
-				= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+				where
+					Psi(x) = polyGamma(0,x)
+			 */
+			var
+				ax1 =  1 + a/x,
+				xa1 = 1 + x/a,
 
-			Psi(x) = polyGamma(0,x)
-		 */
-		var
-			ax1 =  1 + a/x,
-			xa1 = 1 + x/a,
-			//xak = xa1**(-k),
-			//axx = ax1**(-x),
-			logGx = logGamma[ floor(x) ],
-			logGkx = logGamma[ floor(k + x) ],
-			logGk1 = logGamma[ floor(k + 1) ],
-			psix = Psi[ floor(x) ], 
-			psikx = Psi[ floor(k + x) ], 
-			logp0 = logGkx - logGk1 - logGx - x*log(ax1) - k*log(xa1),
-			arg = (a/x - k/a)/ax1 - log(ax1) + psikx - psix,
-			p1 = exp(logp0) * arg;
+				// indexed Psi may cause round-off problems in optimizer
+				psix = Psi[ floor(x) ], 
+				psikx = Psi[ floor(k + x) ], 
+
+				slope = (a/x - k/a)/ax1 - log(ax1) + psikx - psix;
+
+			return exp( logp(k,a,x) ) * slope;  // the slope may go negative so cant return logp1		
+		}
+
+		function p2(k,a,x) {  // not used
+			/*
+			return p0" = 
+					(1 + x/a)**(-k)*(a/x + 1)**(-x)*( a**2/(x**3*(a/x + 1)**2) 
+						+ (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1) )*polygamma(0, x) 
+					+ 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) 
+					+ polygamma(0, x)**2 
+					- 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) 
+					- 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) 
+					- 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
+			 */
+			var
+				ax1 =  1 + a/x,
+				xa1 = 1 + x/a,
+				xak = xa1**(-k),
+				axx = ax1**(-x),
+
+				// should make these unindexed log versions
+				gx = logGamma[ floor(x) ],
+				gkx = logGamma[ floor(k + x) ],
+
+				logax1 = log(ax1),
+				xax1 = x*ax1,
+				axa1 = a*xa1,				
+
+				// should make these Psi 
+				pg0x = polygamma(0, x),
+				pg0kx = polygamma(0, k + x);
+
+			return xak*axx*(a**2/(x**3*ax1**2) + (a/xax1 - logax1)**2 - 2*(a/xax1 - logax1)*pg0x 
+						+ 2*(a/xax1 - logax1)*pg0kx + pg0x**2 
+						- 2*pg0x*pg0kx + pg0kx**2 - polygamma(1, x) + polygamma(1, k + x) 
+						- 2*k*(a/xax1 - logax1)/axa1 + 2*k*pgx/axa1 - 2*k*pg0kx/axa1 
+						+ k**2/(a**2*xa1**2) + k/(a**2*xa1**2))*gkx/gx;
+		}
 		
-		//Log("p1",a,k,x,logp0, psikx, psix, arg, p1);
+		function chiSq1(f,a,x) { 
+			/*
+			return chiSq' (x)
+			*/
+			var 
+				sum = 0,
+				Kmax = f.length;
 
-		return exp( p1 );
-	}
+			for (var k=1; k<Kmax; k++) sum += ( exp( logp0(a,k,x) ) - f[k] ) * p1(a,k,x);
 
-	function p2(a,k,x) {  // not used
-		/*
-		  p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
-		  return p" = 
-				(1 + x/a)**(-k)*(a/x + 1)**(-x)*( a**2/(x**3*(a/x + 1)**2) 
-					+ (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1) )*polygamma(0, x) 
-				+ 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) 
-				+ polygamma(0, x)**2 
-				- 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) 
-				- 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) 
-				- 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
-		 */
+			//Log("chiSq1",a,x,Kmax,sum);
+			return sum;
+		}
+
+		function chiSq2(f,a,x) {
+			/*
+			return chiSq"(x)
+			*/
+			var
+				sum =0,
+				Kmax = f.length;
+
+			for (var k=1; k<Kmax; k++) sum += p1(a,k,x) ** 2;
+
+			//Log("chiSq2",a,x,Kmax,sum);
+			return 2*sum;
+		}
+
 		var
-			ax1 =  1 + a/x,
-			xa1 = 1 + x/a,
-			xak = xa1**(-k),
-			axx = ax1**(-x),
-			gx = gamma[x],
-			gkx = gamma[k + x],
-			logax1 = log(ax1),
-			xax1 = x*ax1,
-			axa1 = a*xa1,				
-			pg0x = polygamma(0, x),
-			pg0kx = polygamma(0, k + x);
-
-		return xak*axx*(a**2/(x**3*ax1**2) + (a/xax1 - logax1)**2 - 2*(a/xax1 - logax1)*pg0x 
-					+ 2*(a/xax1 - logax1)*pg0kx + pg0x**2 
-					- 2*pg0x*pg0kx + pg0kx**2 - polygamma(1, x) + polygamma(1, k + x) 
-					- 2*k*(a/xax1 - logax1)/axa1 + 2*k*pgx/axa1 - 2*k*pg0kx/axa1 
-					+ k**2/(a**2*xa1**2) + k/(a**2*xa1**2))*gkx/gx;
+			Mmax = 400,
+			Kmax = f.length + Mmax,
+			eps = $(Kmax, 1e-3),
+			Zeta = $(Kmax, function (k,Z) {
+				Z[k] = k ? ZETA(k+1) : -0.57721566490153286060; // -Z[0] = euler-masheroni constant
+			}),
+			Psi1 = $sum(Zeta),
+			Psi = $(Kmax, function (x, P) {  // recurrence to build the diGamma Psi
+				P[x] = x ? P[x-1] + 1/x : Psi1;
+			});
+		
+		return NEWRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
 	}
-
-	function g0(x) {
+	
+	function LMA(init, k, logf, logp) {  // N-parameter levenberg-marquadt algorithm
 		/*
-		return d/dx(chiSquared) at x
+			k = possibly compressed list of count bins
+			init = initial parameter values [a0, x0, ...]
+			logf  = possibly compressed list of log count frequencies
 		*/
-		var 
-			sum = 0,
-			a = Kbar,
-			f = pK;
+		
+		switch ( init.length ) {
+			case 1:
+				return LM({  // levenberg-marquadt
+					x: k,  
+					y: logf
+				}, function ([x]) {
+					//Log(Kbar, x);
+					return (k) => logp(k, Kbar, x);
+				}, {
+					damping: 0.1, //1.5,
+					initialValues: init,
+					//gradientDifference: 0.1,
+					maxIterations: 1e3,  // >= 1e3 with compression
+					errorTolerance: 10e-3  // <= 10e-3 with compression
+				});
+				break;
+				
+			case 2:
+				
+				switch ("2stage") {
+					case "1stage":
+						return LM({  // greedy approach will often fail when LM attempts an x<0
+							x: k,  
+							y: logf  
+						}, function ([x,u]) {
+							Log(x,u);
+							//return (k) => logp(k, Kbar, x, u);
+							return x ? (k) => logp(k, Kbar, x, u) : (k) => -50;
+						}, {
+							damping: 0.1, //1.5,
+							initialValues: init,
+							//gradientDifference: 0.1,
+							maxIterations: 1e2,
+							errorTolerance: 10e-3
+						});
+						
+					case "2stage":
+						var
+							x0 = init[0],
+							u0 = init[1],
+							fit = LM({  // levenberg-marquadt
+								x: k,  
+								y: logf
+							}, function ([u]) {
+								//Log("u",u);
+								return (k) => logp(k, Kbar, x0, u);
+							}, {
+								damping: 0.1, //1.5,
+								initialValues: [u0],
+								//gradientDifference: 0.1,
+								maxIterations: 1e3,  // >= 1e3 with compression
+								errorTolerance: 10e-3  // <= 10e-3 with compression
+							}),
+							u0 = fit.parameterValues[0],
+							fit = LM({  // levenberg-marquadt
+								x: k,  
+								y: logf
+							}, function ([x]) {
+								//Log("x",x);
+								return (k) => logp(k, Kbar, x, u0);
+							}, {
+								damping: 0.1, //1.5,
+								initialValues: [x0],
+								//gradientDifference: 0.1,
+								maxIterations: 1e3,  // >= 1e3 with compression
+								errorTolerance: 10e-3  // <= 10e-3 with compression
+							}),
+							x0 = fit.parameterValues[0];
 
-		for (var k=1; k<Kmax; k++) sum += ( p0(a,k,x) - pK[k] ) * p1(a,k,x);
-
-		Log("g0",a,x,Kmax,sum);
-		return sum;
+						fit.parameterValues = [x0, u0];
+						return fit;	
+					}
+				break;	
+		}
 	}
+	
+	function BFS(init, f, logp) { // 1-parameter brute force search
+		function NegBin(NB, Kbar, M, logp) {
+			$use(NB, function (k) {
+				NB[k] = exp( logp(k, Kbar, M) );
+			});
+		}
+	
+		function chiSquared(p, f, N) {
+			var chiSq = 0, err = 0;
+			$use(p, function (k) {
+				//chiSq += (H[k] - N*p[k])**2 / (N*p[k]);
+				chiSq += (f[k] - p[k])**2 / p[k];
+			});
+			return chiSq * N;
+		}
 
-	function g1(x) {
 		var
-			sum =0,
-			a = Kbar;
+			pRef = $(f.length),
+			Mbrute = 1,
+			chiSqMin = 1e99;
 
-		for (var k=1; k<Kmax; k++) sum += p1(a,k,x) ** 2;
+		for (var M=init[0], Mmax=init[1], Minc=init[2]; M<Mmax; M+=Minc) {  // brute force search
+			NegBin(pRef, Kbar, M, logNB);
+			var chiSq = chiSquared(pRef, fK, N);
 
-		Log("g1",a,x,Kmax,sum);
-		return 2*sum;
+			Log(M, chiSq, $sum(pRef) );
+
+			if (chiSq < chiSqMin) {
+				Mbrute = M;
+				chiSqMin = chiSq;
+			}
+		} 
+		return Mbrute;
 	}
 	
 	var
-		Kmax = H.length,
-		Mmax = 800,
-		Kbar = 0,
-		chiSqMin = 1e99,
-		Mbest = 1,
 		log = Math.log,	
 		exp = Math.exp,
 		floor = Math.floor,
-		eps = $(Kmax, 1),
-		Ktop = Kmax + Mmax,
+		/*
 		logGamma = $(Ktop , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
 		}),
+		*/
+		/*
 		Gamma = $(Ktop, function (k,G) {
 			G[k] = exp( logGamma[k] );
 		}),
-		Zeta = $(Ktop, function (k,Z) {
-			Z[k] = k ? ZETA(k+1) : -0.57721566490153286060; // -Z[0] = euler-masheroni constant
-		}),
-		K = $(Kmax, function (k, K) {
-			K[k] = k;
-		}),
-		pK = $(Kmax, function (k, p) {  // smoothed count frequencies
-			if ( H[k] ) 
-				p[k] = H[k] / N;
-			else
-			if ( k ) {
-				N += H[k-1];
-				p[k] = H[k-1] / N;
+		*/
+		Kmax = H.length,
+		Kbar = 0,
+		K = [],  // complessed count list
+		kCompression = "compress" in solve ? solve.compress : true,
+		pInterpolation = "interpolate" in solve ? solve.interpolate : false,
+		Mdebug = 0, //75,
+		fK = $(Kmax, function (k, p) {    // count frequencies
+			if (pInterpolation)  {
+				if ( H[k] ) 
+					p[k] = H[k] / N;
+				else
+				if ( k ) {
+					N += H[k-1];
+					p[k] = H[k-1] / N;
+				}
+				else
+					p[k] = 0;
 			}
 			else
-				p[k] = 0;
-		}),
-		Psi1 = $sum(Zeta),
-		Psi = $(Ktop, function (x, P) {  // recurrence to build the diGamma Psi
-			P[x] = x ? P[x-1] + 1/x : Psi1;
-		}),
-		pRef = $(Kmax);
+				p[k] = H[k] / N;
+		});
 
 	$use(H, function (k) {
-		Kbar += k * pK[k];
+		Kbar += k * fK[k];
 	});
-	//Kbar /= N;
-		
-	Log("Kbar=", Kbar, T, N);
-	for (var met in {lma:1})
-	switch ( met ) {
-		case "debug2":
-			var M = 75;
-			$use(K, function (k) {
-				//Log(K[k], p0(Kbar,k,M), pK[k]);
-				Log(K[k], p0(Kbar,k,75), p0(Kbar,k,65));
-			});
-			break;
-			
-		case "debug1":
-			var M = 150;
-			logNegBin(pRef, logGamma, Kbar, M);  // for debugging p0
-			$use( pRef, function (k) {
-				var p00 = p0(Kbar,k,M);
-				Log("logp0",Kbar,k,M,log(p00), pRef[k], p00, pK[k]);
-			});
-			break;
-			
-		case "lma":
-			$use(pK, function (k,p) {
-				p[k] = p0(Kbar, k, Mbest);
-				//Log(k,p[k], pK[k]);
-			});
-			Log("p norm", $sum(pK));
-			
-			var fits = LM({
-				x: K,
-				y: pK
-			}, function ([x]) {
-				Log(x);
-				return (k) => p0(Kbar, k, x);
-				//return (k) => ( p0(Kbar,k,x) - pK[k] ) * p1(Kbar,k,x);
-			}, {
-				damping: 1.5,
-				initialValues: [15],
-				gradientDifference: 1,
-				maxIterations: 1e2,
-				errorTolerance: 10e-3
-			});
-			Log("LM sol", fits, Mbest);
-			break;
-			
-		case "lfa":
-			var
-				M = 20,  
-				a = Kbar;
 
-			var M = NEWRAP( g0, g1, M);  // newton-raphson search
+	$use(fK, function (k) {   
+		if ( kCompression ) {
+			if ( fK[k] ) K.push( k );
+		}
+		else
+			K.push(k); 
+	});
 
-			Log("LFA sol",M);
-			break;
+	var
+		M = 0,
+		logfK = $(K.length, function (n,logf) {  // observed log count frequencies
+			if ( Mdebug ) { // enables debugging
+				logf[n] = logNB(K[n], Kbar, Mdebug);
+				//logf[n] += (n%2) ? 0.5 : -0.5;  // add some "noise"
+			}
+			else
+				logf[n] = fK[ K[n] ] ? log( fK[ K[n] ] ) : -7;
+		});
+
+	Log("Kbar=", Kbar, T, N, Kmax, "->", K.length, kCompression, pInterpolation);
+
+	if (false)
+		$use(K, function (n) {
+			var k = K[n];
+			Log(n, k, logNB(k,Kbar,55), logNB(k,Kbar,65), log( fK[k] ), logfK[n] );
+		});
+
+	if ( solve.lma) {  // levenberg-marquadt algorithm for [M, ...]
+		var 
+			fits = LMA( solve.lma, K, logfK, logNB),
+			M = fits.parameterValues[0];
+
+		Log("LMA sol", fits);
+	}
 	
-		case "brute":
-
-			for (var M=15; M<200; M+=5) {  // brute force search
-				NegBin(pRef, logGamma, Kbar, M);
-				var chiSq = chiSquared(pRef, H, N);
-
-				Log(M, chiSq, $sum(pRef) );
-
-				if (M == -75) {
-					var x = [];
-					pRef.each( function (n,p) {
-						x.push([ n, p*N, H[n] ]);
-					});
-					Log(x);
-				}
-
-				if (chiSq < chiSqMin) {
-					Mbest = M;
-					chiSqMin = chiSq;
-				}
-			} 
-			Log("brute sol", Mbest);
+	if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  and with compression off, interpolation on
+		var M = LFA( solve.lfa, fK, logNB);
+		Log("LFA sol",M);
+	}
+	
+	if (solve.bfs) { // brute force search for M
+		var M = BFS( solve.bfs, fK, logNB);
+		Log("BFS sol", M);
 	}
 	
 	cb({
-		coherence_intervals: Mbest,
+		coherence_intervals: M,
 		mean_count: Kbar,
 		mean_rate: Kbar / T,
-		degeneracy_param: Kbar / Mbest,
-		snr: Math.sqrt( Kbar / ( 1 + Kbar/Mbest ) ),
-		coherence_time: T / Mbest
+		degeneracy_param: Kbar / M,
+		snr: Math.sqrt( Kbar / ( 1 + Kbar/M ) ),
+		coherence_time: T / M
 	});
 }
 
 //======== unit tests
-function p0(a,k,x) {
-	/*
-	  a = <k> = avg count, x = script M = coherence intervals, k = frequency
-	  return p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
-	 */
+/*
+function _logp0(a,k,x) {
 	var
 		ax1 =  1 + a/x,
 		xa1 = 1 + x/a,
@@ -1421,8 +1524,9 @@ function p0(a,k,x) {
 	return logp0;
 	//return exp( logp0 );
 }
+*/
 
-switch (6) {
+switch (0) {
 case 6.1:
 		var len = 150,x = 75, a = 36;
 		var floor = Math.floor, log = Math.log, exp = Math.exp;
@@ -1433,7 +1537,7 @@ case 6.1:
 		
 		var p0map = function ([a]) {
 			 Log(a,x);
-			return (k) => p0(a,k,x);
+			return (k) => _logp0(a,k,x);
 		};
 		var data = {
 		  x: new Array(len),
@@ -1464,7 +1568,7 @@ case 6.1:
 		
 		var p0map = function ([a,x]) {
 			 Log(a,x);
-			return (k) => p0(a,k,x);
+			return (k) => _logp0(a,k,x);
 		};
 		var data = {
 		  x: new Array(len),
@@ -1595,6 +1699,14 @@ case 6.1:
 				parts: [0.5,0.5],
 			},  */
 
+			solve:  {
+				compress: true,
+				interpolate: false,
+				lma: [50]
+				// bfs: [5,200,5]
+				// lfa: [50]
+			},
+			
 			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
