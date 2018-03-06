@@ -20,6 +20,7 @@ var 		// external modules
 	MATH = JSLIB.MATH,
 	GAMMA = JSLIB.GAMMA,
 	NEWRAP = JSLIB.NEWRAP,
+	LM = JSLIB.LM,
 	ZETA = JSLIB.ZETA;
 
 var 		// totem modules					
@@ -1114,11 +1115,11 @@ function countStats(H, T, N, cb) {
 	
 	function logNegBin(logNB, logG, Kbar, M) {
 		var 
-			logMK = log(1 + M / Kbar),
-			logKM = log(1 + Kbar / M);
+			logMK1 = log(1 + M / Kbar),
+			logKM1 = log(1 + Kbar / M);
 
 		$use(logNB, function (k) {
-			logNB[k] = logG[k+M] - logG[k+1] - logG[M] - k*logMK - M*logKM;
+			logNB[k] = logG[k+M] - logG[k+1] - logG[M] - k*logMK1 - M*logKM1;
 		});
 	}
 
@@ -1153,10 +1154,9 @@ function countStats(H, T, N, cb) {
 			logGx = logGamma[ floor(x) ],
 			logGkx = logGamma[ floor(k + x) ],
 			logGk1 = logGamma[ floor(k + 1) ],
-			logp0 = logGkx - logGk1 - logGx - x*log(ax1) - k*log(xa1);
+			logp0 = logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 
 		// p0 = gkx/gx * axx * xak;
-		//Log("logp0",a,k,x,logp0, pRef[k]);
 		return exp( logp0 );
 	}
 
@@ -1203,7 +1203,7 @@ function countStats(H, T, N, cb) {
 		return exp( p1 );
 	}
 
-	function p2(a,k,x) {
+	function p2(a,k,x) {  // not used
 		/*
 		  p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
 		  return p" = 
@@ -1242,9 +1242,9 @@ function countStats(H, T, N, cb) {
 		var 
 			sum = 0,
 			a = Kbar,
-			f = pH;
+			f = pK;
 
-		for (var k=1; k<Kmax; k++) sum += ( p0(a,k,x) - pH[k] ) * p1(a,k,x);
+		for (var k=1; k<Kmax; k++) sum += ( p0(a,k,x) - pK[k] ) * p1(a,k,x);
 
 		Log("g0",a,x,Kmax,sum);
 		return sum;
@@ -1263,7 +1263,7 @@ function countStats(H, T, N, cb) {
 	
 	var
 		Kmax = H.length,
-		Mmax = 200,
+		Mmax = 800,
 		Kbar = 0,
 		chiSqMin = 1e99,
 		Mbest = 1,
@@ -1281,8 +1281,19 @@ function countStats(H, T, N, cb) {
 		Zeta = $(Ktop, function (k,Z) {
 			Z[k] = k ? ZETA(k+1) : -0.57721566490153286060; // -Z[0] = euler-masheroni constant
 		}),
-		pH = $(Kmax, function (k, p) {
-			p[k] = H[k] / N;
+		K = $(Kmax, function (k, K) {
+			K[k] = k;
+		}),
+		pK = $(Kmax, function (k, p) {  // smoothed count frequencies
+			if ( H[k] ) 
+				p[k] = H[k] / N;
+			else
+			if ( k ) {
+				N += H[k-1];
+				p[k] = H[k-1] / N;
+			}
+			else
+				p[k] = 0;
 		}),
 		Psi1 = $sum(Zeta),
 		Psi = $(Ktop, function (x, P) {  // recurrence to build the diGamma Psi
@@ -1291,44 +1302,87 @@ function countStats(H, T, N, cb) {
 		pRef = $(Kmax);
 
 	$use(H, function (k) {
-		Kbar += k * H[k];
+		Kbar += k * pK[k];
 	});
-	Kbar /= N;
+	//Kbar /= N;
 		
 	Log("Kbar=", Kbar, T, N);
-	
-	if (true) {
-		var
-			M0 = 20,
-			a = Kbar;
-		
-		// logNegBin(pRef, logGamma, a, M0);  // for debugging p0
-		
-		var M = NEWRAP( g0, g1, M0);  // newton-raphson search
-
-		Log("newrap M=",M);
-	}
-	
-	if (false) 
-		for (var M=15; M<200; M+=5) {  // brute force search
-			NegBin(pRef, logGamma, Kbar, M);
-			var chiSq = chiSquared(pRef, H, N);
-
-			Log(M, chiSq, $sum(pRef) );
-
-			if (M == -75) {
-				var x = [];
-				pRef.each( function (n,p) {
-					x.push([ n, p*N, H[n] ]);
-				});
+	for (var met in {lma:1})
+	switch ( met ) {
+		case "debug2":
+			var M = 75;
+			$use(K, function (k) {
+				//Log(K[k], p0(Kbar,k,M), pK[k]);
+				Log(K[k], p0(Kbar,k,75), p0(Kbar,k,65));
+			});
+			break;
+			
+		case "debug1":
+			var M = 150;
+			logNegBin(pRef, logGamma, Kbar, M);  // for debugging p0
+			$use( pRef, function (k) {
+				var p00 = p0(Kbar,k,M);
+				Log("logp0",Kbar,k,M,log(p00), pRef[k], p00, pK[k]);
+			});
+			break;
+			
+		case "lma":
+			$use(pK, function (k,p) {
+				p[k] = p0(Kbar, k, Mbest);
+				//Log(k,p[k], pK[k]);
+			});
+			Log("p norm", $sum(pK));
+			
+			var fits = LM({
+				x: K,
+				y: pK
+			}, function ([x]) {
 				Log(x);
-			}
+				return (k) => p0(Kbar, k, x);
+				//return (k) => ( p0(Kbar,k,x) - pK[k] ) * p1(Kbar,k,x);
+			}, {
+				damping: 1.5,
+				initialValues: [15],
+				gradientDifference: 1,
+				maxIterations: 1e2,
+				errorTolerance: 10e-3
+			});
+			Log("LM sol", fits, Mbest);
+			break;
+			
+		case "lfa":
+			var
+				M = 20,  
+				a = Kbar;
 
-			if (chiSq < chiSqMin) {
-				Mbest = M;
-				chiSqMin = chiSq;
-			}
-		} 
+			var M = NEWRAP( g0, g1, M);  // newton-raphson search
+
+			Log("LFA sol",M);
+			break;
+	
+		case "brute":
+
+			for (var M=15; M<200; M+=5) {  // brute force search
+				NegBin(pRef, logGamma, Kbar, M);
+				var chiSq = chiSquared(pRef, H, N);
+
+				Log(M, chiSq, $sum(pRef) );
+
+				if (M == -75) {
+					var x = [];
+					pRef.each( function (n,p) {
+						x.push([ n, p*N, H[n] ]);
+					});
+					Log(x);
+				}
+
+				if (chiSq < chiSqMin) {
+					Mbest = M;
+					chiSqMin = chiSq;
+				}
+			} 
+			Log("brute sol", Mbest);
+	}
 	
 	cb({
 		coherence_intervals: Mbest,
@@ -1341,7 +1395,130 @@ function countStats(H, T, N, cb) {
 }
 
 //======== unit tests
-switch (0) {
+function p0(a,k,x) {
+	/*
+	  a = <k> = avg count, x = script M = coherence intervals, k = frequency
+	  return p = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k)
+	 */
+	var
+		ax1 =  1 + a/x,
+		xa1 = 1 + x/a,
+		//xak = xa1**(-k),
+		//axx = ax1**(-x),
+		//gx = Gamma[x],
+		//gkx = Gamma[k + x],
+		logGx = GAMMA.log(x),
+		logGkx = GAMMA.log(k+x), 
+		logGk1 = GAMMA.log(k+1),
+		//logGx = logGamma[ floor(x) ],
+		//logGkx = logGamma[ floor(k + x) ],
+		//logGk1 = logGamma[ floor(k + 1) ],
+		logp0 = logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
+
+	// p0 = gkx/gx * axx * xak;
+	
+	Log(a,k,x, logp0);
+	return logp0;
+	//return exp( logp0 );
+}
+
+switch (6) {
+case 6.1:
+		var len = 150,x = 75, a = 36;
+		var floor = Math.floor, log = Math.log, exp = Math.exp;
+		
+		var logGamma = $(len*2 , function (k, logG) {
+			logG[k] = (k<3) ? 0 : GAMMA.log(k);
+		});
+		
+		var p0map = function ([a]) {
+			 Log(a,x);
+			return (k) => p0(a,k,x);
+		};
+		var data = {
+		  x: new Array(len),
+		  y: new Array(len)
+		};
+		var sampleFunction = p0map([75]);
+		for (var i = 0; i < len; i++) {
+		  data.x[i] = i;
+		  data.y[i] = sampleFunction(i) ;
+		}
+		var options = {
+		  damping: 0.1,
+		//gradientDifference: 1,	
+		maxIterations: 1e1,
+		  initialValues: [120]
+		};
+
+		var ans = LM(data, p0map, options);
+		Log(ans);	
+		break;		
+	case 6:
+		var len = 150,x = 75, a = 36;
+		var floor = Math.floor, log = Math.log, exp = Math.exp;
+		
+		var logGamma = $(len*2 , function (k, logG) {
+			logG[k] = (k<3) ? 0 : GAMMA.log(k);
+		});
+		
+		var p0map = function ([a,x]) {
+			 Log(a,x);
+			return (k) => p0(a,k,x);
+		};
+		var data = {
+		  x: new Array(len),
+		  y: new Array(len)
+		};
+		var sampleFunction = p0map([36,75]);
+		for (var i = 0; i < len; i++) {
+		  data.x[i] = i;
+		  data.y[i] = sampleFunction(i) ;
+		}
+		var options = {
+		  damping: 0.1,
+		//gradientDifference: 1,	
+		maxIterations: 1e1,
+		  initialValues: [15,120]
+		};
+
+		var ans = LM(data, p0map, options);
+		Log(ans);	
+		break;
+		
+	case 5:
+		
+		function sinFunction([a, b]) {
+		  return (t) => a * Math.sin(b * t);
+		}
+		
+		function quadFunction([a, b]) {
+			Log(a,b);
+		  return (t) => a + b * t**2;
+		}
+
+		var len = 20;
+		var data = {
+		  x: new Array(len),
+		  y: new Array(len)
+		};
+		var sampleFunction = quadFunction([2, 4]);
+		var sampleFunction2 = quadFunction([2, 4.1]);
+		for (var i = 0; i < len; i++) {
+		  data.x[i] = i;
+		  data.y[i] = (i % 2) ? sampleFunction(i) : sampleFunction(i);
+		}
+		var options = {
+		  damping: 0.1,
+		maxIterations: 1e2,
+			//gradientDifference: 1,
+		  initialValues: [-3, 16]
+		};
+
+		var ans = LM(data, quadFunction, options);
+		Log(ans);	
+		break;
+		
 	case 4.2:
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
@@ -1456,7 +1633,7 @@ switch (0) {
 			else
 				ran.pipe( [], function (evs) {
 					evs.each(function (n,ev) {
-						Log(ev);
+						//Log(ev);
 					});
 				});
 		});
