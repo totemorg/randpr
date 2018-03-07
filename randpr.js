@@ -48,7 +48,6 @@ class RAN {
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 10, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
-			//batch: 20, 	// number of steps before running stats are updated
 			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
 						
 			// K-state config parameters
@@ -805,23 +804,8 @@ class RAN {
 		
 		if  (sync) {  // pipe is sync mode using array store
 			ran.start();
-			//while (ran.s < ran.steps) ran.start( );  // advance generative process to end
-			//ran.end();  // terminate process
 			
 			sinkStream( ran.store );
-			/*
-			if (cb)  // send events to callback
-				cb( ran.store );
-			
-			else { // pipe events to sink stream
-				var n=0, evStream = new STREAM.Readable({
-					read: function () {
-						this.push( ran.store[n++] || null );
-					}
-				});
-				
-				evStream.pipe(sinkStream);
-			}  */
 		}
 			
 		else {	// pipe in async mode
@@ -846,25 +830,6 @@ class RAN {
 				});
 
 			ranStream.pipe(editStream).pipe(charStream).pipe(sinkStream);
-
-			/*
-			if (cb) {  // buffer events and export to callback
-				var evStream = new STREAM.Writable({
-					objectMode: true,
-					write: function (ev,en,cb) {
-						sinkStream.push(ev);
-						cb(null);
-					}
-				});
-
-				ranStream.pipe(editStream).pipe(evStream).on("finish", function () {
-					cb(sinkStream);
-				});
-			}
-
-			else  // stream events to sink stream
-				ranStream.pipe(editStream).pipe(charStream).pipe(sinkStream);
-			*/
 		}
 			
 	}
@@ -876,37 +841,6 @@ RAN.MVN = JSLIB.MVN.default;
 RAN.MLE = JSLIB.MLE;
 
 module.exports = RAN;
-
-/*
-function STATS(statBins,N) {
-	this.statBins= statBins;
-	this.dbins= (statBins-1) / N;
-	this.dcounts= (N-1) / (statBins-1);
-	this.samples= 0;
-	
-	var 
-		hist = this.hist = $(statBins,0),
-		cnt = 1, del = this.dcounts,
-		count = this.count = $(statBins, function (bin,H) {
-			H[bin] = Math.round(cnt += del);
-		});
-
-	/ *
-	for (var cnt=1,bin=0; bin<statBins; bin++, cnt+=this.dcounts) {
-		hist[bin] = 0;
-		count[bin] = Math.round(cnt);
-	} * /
-}	
-	
-STATS.prototype.add = function (val) {
-	this.hist[ Math.floor( val * this.dbins ) ]++;
-	this.samples++;
-}
-
-STATS.prototype.norm = function () {
-	for (var bin=0, hist=this.hist, statBins=this.statBins; bin<statBins; bin++) hist[bin] /= this.samples * this.dcounts;
-}
-*/
 
 function expdev(mean) {
 	return -mean * Math.log(Math.random());
