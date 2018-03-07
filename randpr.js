@@ -31,6 +31,10 @@ var															// shortcuts
 	Each = ENUM.each,
 	Log = console.log;
 
+var
+	sqrt = Math.sqrt, floor = Math.floor, rand = Math.random,
+	log = Math.log, exp = Math.exp;
+
 class RAN {
 	
 	constructor(opts, cb) {
@@ -44,7 +48,7 @@ class RAN {
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 10, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
-			batch: 20, 	// number of steps before running stats are updated
+			//batch: 20, 	// number of steps before running stats are updated
 			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
 						
 			// K-state config parameters
@@ -86,15 +90,15 @@ class RAN {
 			A: null,	// [KxK] jump rates
 			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
-			// unsupervised learning
-			solve: null,   // count stats parms
-			/* {
-				compress: true,
-				interpolate: false,
-				lma: [50]
-				// bfs: [5,200,5]
-				// lfa: [50]
-			}, */
+			// learning parms
+			solve: {   // count stats parms
+				batch: 0, 				// supervised learning batch size
+				compress: true,		// compress count frequencies
+				interpolate: false,	// interpolate count frequencies
+				lma: [50]			// use levenberg-marquardt unsupervised learning
+				// bfs: [5,200,5]	// use brute force search
+				// lfa: [50]			// use linear feactor analysis
+			}, 
 			
 			next: 0, 	// next time step to evaluate batch 
 			Tc: 0,  // coherence time >0 [s] 
@@ -115,8 +119,7 @@ class RAN {
 			K = this.K, // K-state spec
 			alpha = this.alpha, // 2-state spec
 			p = this.p, // 2-state spec
-			symbols = this.symbols,  // state symbols
-			sqrt = Math.sqrt, floor = Math.floor, rand = Math.random;
+			symbols = this.symbols;  // state symbols
 
 		if ( this.learn ) { // learning mode
 			var
@@ -130,7 +133,7 @@ class RAN {
 				pi = this.pi = $(K,0),
 				A = this.A = $$(K,K,0);
 			
-			Log("learning",K,trP,dt,A);
+			Log("learning mode",K,trP,dt,A);
 		}
 		
 		else
@@ -296,8 +299,8 @@ class RAN {
 			p = 1/K,
 			Np = p * N,
 			N0 = this.N0 = $$(K,K,function (fr,to,N0) {
-					N0[fr][to] = delta(fr,to) ? Np : 0
-				}),
+				N0[fr][to] = delta(fr,to) ? Np : 0
+			}),
 			H = this.H = $(N),
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
@@ -305,8 +308,12 @@ class RAN {
 			WU = this.WU = this.wiener ? $(N) : [],
 			WQ = this.WQ = this.wiener ? $(N) : [];
 		
-		this.next = this.t = this.s = this.samples = 0;  // initialize process counters
+		this.t = this.s = this.samples = 0;  // initialize process counters
 
+		this.next = this.solve.batch || 0;
+		
+		// initialize ensemble
+		
 		if ( this.learn ) {  // learning mode
 			$use(U, function(n) {   
 				H[n] = U0[n] = U[n] = 0;
@@ -399,16 +406,16 @@ class RAN {
 	
 	end() {  // terminate process
 		this.corrTime();		
-		this.onBatch();
+		if (this.next) this.onBatch();
 		this.onEnd();
 	}
 	
-	jumpStats(solve, cb) {
+	eventStats(solve, cb) {
 		var 
-			J = this.J,
+			J = this.J,  // number of  state jumps (aka events) made by each member in the ensemble
 			jumps = this.jumps = $(max(J)+1, 0);
 			
-		$use(J, function (n) {
+		$use(J, function (n) {  // count frequencies across the ensemble
 			jumps[ J[n] ]++;
 		});
 		
@@ -427,32 +434,32 @@ class RAN {
 
 		$use(U1,U);  // hold current states U in the U1 buffer used to update the N1 counters
 		
-		if (evs) { // supervised learning mode 
+		if (evs) { // learning mode 
 			if (!t) { // initialize states at t=0
 				evs.each( function (i, ev) {
-					var n = ev.n;
-					U[ n ] = ev.u;
-					Y[ n ] = [ev.x, ev.y, ev.z];
+					var n = ev.n;		// ensemble index
+					U[ n ] = ev.u || 0;  // state = 0 if unsupervised
+					Y[ n ] = [ev.x, ev.y, ev.z];  // observations
 				});
 				$use(U0, U);
 				$use(U1, U);
 			}
 				
-			evs.each(function (n,ev) {   // assume time-ordered events
+			evs.each(function (n,ev) {   // assume events have been time-ordered
 				var 
-					n = ev.n,
-					fr = U[n],
-					t = ev.t,
-					to = ev.u;
+					n = ev.n,  // ensemble index = unique event id
+					fr = U[n],   // current state of member (0 when unsupervised)
+					t = ev.t,	// event time
+					to = ev.u;	// event state (if supervised) or undefined (unsupervised, hidden markov model)
 				
-				if ( fr != to ) {
+				if ( fr != to ) {  // always true when unsupervised
 					//Log("jump", t, n, fr, to);
 					//ran.onJump(n,fr,to,0); 	// callback with jump info (uncomment if needed)
 					cumH[fr][to] += t - H[n]; 	// total holding time in from-to jump
 					cumN[fr][to] ++;  	// total number of from-to jumps
 					
 					J[ n ]++; 		// increment jump counter
-					U[ n ] = to;  		// set state
+					U[ n ] = to || 0;  		// force state = 0 if unsupervised
 					H[ n ] = t;			// hold jump time
 					Y[ n ] = [ev.x, ev.y, ev.z];  // save observation
 						// obs ? obs.emP[to].sample() : 0;  // save observation
@@ -490,7 +497,7 @@ class RAN {
 			//Log("wsteps", this.wiener);
 			var 
 				M = ran.wiener,
-				floor = Math.floor, sqrt = Math.sqrt, 
+				//floor = Math.floor, sqrt = Math.sqrt, 
 				nrv = ran.NRV.sample, WU = ran.WU, WQ = ran.WQ;
 			
 			for (var n=0; n<N; n++) {				
@@ -504,25 +511,39 @@ class RAN {
 		ran.t += ran.dt; ran.s++;
 	}
 		
-	start ( ) {	  // advance process to next batch with callbacks to batch()
+	start ( ) {	  // advance process with possible callbacks to onBatch()
 		var 
-			ran = this,
-			exp = Math.exp, 
-			log = Math.log;
-
-		function poisson(m,a) {
-			// a^m e(-a) / m!
-			for (var sum=0,k=m; k; k--) sum += log(k);
-			return exp( m*log(a) - a - sum );	
-		}
+			ran = this;
+			//exp = Math.exp, 
+			//log = Math.log;
 
 		//Log("rand start", ran.halt, ran.steps, ran.N);
+		while (ran.s < ran.steps) {  // advance process to end
+			if (ran.next) { // have supervised learning batches
+				while (ran.s < ran.next) ran.step(); 
+				ran.onBatch();
+			}
+
+			else
+				ran.step(); 
+		}
 		
+/*
 		if ( ran.learn )  { // learning mode
 			if (!ran.halt)
-				ran.learn( function (evs) {  // get batch of events
-					Log("randpr feed",evs.length, evs[0].t);
-					ran.step(evs);
+				ran.learn( function (evs) {  // get events batch
+					
+					if (evs) {
+						Log("feeding ran",evs.length, evs[0].t);
+						ran.step(evs);
+
+						//Log(ran.s, ran.steps, ran.next, ran.store.length);
+						if ( ran.s > ran.next ) ran.onBatch();
+					}
+					
+					else
+						ran.halt = true;
+					
 					return ran.t;
 				});
 			
@@ -534,7 +555,8 @@ class RAN {
 			ran.onBatch();
 			for (var s=1; s<ran.batch; s++) ran.step(); 
 		}
-		
+*/
+
 	}
 	
 	statCorr ( ) {  // statistical correlation function
@@ -610,16 +632,18 @@ class RAN {
 				? ( mleP[0][0] - trP[0][0] ) / trP[K-1][K-1]
 				: 0;
 		
-			/*
-			$$use(Rmle, function (fr,to) {
-				Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
-			}); */
+		/*
+		$$use(Rmle, function (fr,to) {
+			Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+		}); */
 		this.record({
 			at:"batch",t: this.t, s: this.s,
 			rel_tr_prob_error: Perr,
 			mle_tr_prob: mleP,
 			stat_corr: this.gamma[this.s-1]
 		});		
+		
+		this.next += this.solve.batch;	
 	}
 
 	onError( msg ) {
@@ -656,7 +680,7 @@ class RAN {
 			delta = Kbar / M;
 
 		if (this.solve)
-			this.jumpStats( this.solve, function (stats) {
+			this.eventStats( this.solve, function (stats) {
 				ran.record({
 					at:"end", t:ran.t, s:ran.s,
 					supervised: {
@@ -671,7 +695,7 @@ class RAN {
 						coherence_intervals: M,
 						mean_rate: lambda, 
 						degeneracy_param: delta,
-						snr: Math.sqrt( Kbar / (1 + delta ) )
+						snr: sqrt( Kbar / (1 + delta ) )
 					},
 					unsupervised: stats
 				});
@@ -692,7 +716,7 @@ class RAN {
 					coherence_intervals: M,
 					mean_rate: lambda, 
 					degeneracy_param: delta,
-					snr: Math.sqrt( Kbar / (1 + delta ) )
+					snr: sqrt( Kbar / (1 + delta ) )
 				}
 			});
 			
@@ -721,29 +745,23 @@ class RAN {
 	pipe(sinkStream, cb) {  // sync/async pipe of events to a sink stream or to a callback cb(events)
 		var ran = this;
 
-		ran.onConfig();		
+		ran.onConfig();		// configure the process
 		
-		if (ran.learn) 
+		if (ran.learn)   // in learning mode 
 			ran.learn( function (evs) {  // get batch of events
-				if (evs) {  // feeding events
+				if (evs) {  // process events
 					ran.step(evs);
-
-					//Log(ran.s, ran.steps, ran.next, ran.store.length);
-					if ( ran.s > ran.next ) {
-						ran.onBatch();
-						ran.next += ran.batch;
-					}
 				}
 				
-				else {  // no more events so end and callback with store of batch estimates
+				else {  // terminate and callback with store of batch estimates
 					ran.end();
 					cb(ran.store);
 				}
 			});
 		
-		else
-		if ( ran.store ) {  // $use supplied store to sync pipe process
-			while (ran.s < ran.steps) ran.start( );  // advance to next batch
+		else  // in generative mode
+		if ( ran.store ) {  // use supplied store to sync pipe process
+			while (ran.s < ran.steps) ran.start( );  // advance generative process to end
 			ran.end();  // terminate process
 			
 			if (cb)  // send events to callback
@@ -762,12 +780,12 @@ class RAN {
 
 		else {	// pipe in async mode
 			var
-				ranStream = new STREAM.Readable({  // 1st stage to kick-start generative/learning pipe
+				ranStream = new STREAM.Readable({  // 1st stage primes and terminates the pipe
 					objectMode: true,
-					read: function () {  // kick-start or terminate the pipe
+					read: function () {  // prime or terminate the pipe
 						Log("randpr started",ran.s);
 
-						if ( ran.s < ran.steps ) 	// kick-start 
+						if ( ran.s < ran.steps ) 	// prime
 							ran.start( );
 
 						else  { // terminate
@@ -786,7 +804,7 @@ class RAN {
 					}
 				}),
 
-				charStream = new STREAM.Transform({  // 3rd stage make events human readable 
+				charStream = new STREAM.Transform({  // 3rd stage makes events human readable 
 					writableObjectMode: true,
 					transform: function (ev,en,cb) {
 						this.push( JSON.stringify(ev) ); 
@@ -865,14 +883,14 @@ function avgRate(A) {  // computes average jump rate in A not necessarily balanc
 	return lambda / (K*K-K); 	
 }
 	
-function $$(M,N,cb) {
+function $$(M,N,cb) {  // create matrix A with callback cb(m,n,A,A[m](, or set to cb matrix or value.
 	var A = new Array(M);
 	for (var m=0; m<M; m++) A[m] = new Array(N);
 	
 	return $$use(A,cb);
 }
 
-function $$use(A,cb) {
+function $$use(A,cb) {  // use matrix A with callback cb(m,n,A, A[m]), or set to cb matrix or cb value.
 	var M = A.length, N = A[0].length;
 	
 	if (cb != undefined) 
@@ -892,11 +910,11 @@ function $$use(A,cb) {
 	return A;
 }
 
-function $(N,cb) {
+function $(N,cb) {  // create vector A with callback cb(idx,A)
 	return $use(new Array(N),cb);
 }
 
-function $use(A,cb) {	
+function $use(A,cb) {	// use vector A with callback cb(idx,A), or set to cb vector or set cb value
 	var N = A.length;
 	if (cb != undefined)
 		if (cb.constructor == Function)
@@ -912,7 +930,7 @@ function $use(A,cb) {
 	return A;
 }	
 		
-function cumulative( P ) {  
+function cumulative( P ) {  // replace P with its cumulative
 	switch (0) {
 		case 0:
 			$use(P, function (k) {
@@ -1115,9 +1133,15 @@ function quantize(vec,mins,dels,dims,clip) {  //< unused
 }
 */
 
+function poisson(m,a) {
+	// a^m e(-a) / m!
+	for (var sum=0,k=m; k; k--) sum += log(k);
+	return exp( m*log(a) - a - sum );	
+}
+
 function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	var 
-		log = Math.log, exp = Math.exp,
+		//log = Math.log, exp = Math.exp,
 		K = alpha.length,
 		N = x[0].length,
 		logBs = $(K, function (k,B) {
@@ -1406,9 +1430,9 @@ function countStats(H, T, N, solve, cb) {
 	}
 	
 	var
-		log = Math.log,	
-		exp = Math.exp,
-		floor = Math.floor,
+		//log = Math.log,	
+		//exp = Math.exp,
+		//floor = Math.floor,
 		/*
 		logGamma = $(Ktop , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
@@ -1495,21 +1519,16 @@ function countStats(H, T, N, solve, cb) {
 		mean_count: Kbar,
 		mean_rate: Kbar / T,
 		degeneracy_param: Kbar / M,
-		snr: Math.sqrt( Kbar / ( 1 + Kbar/M ) ),
+		snr: sqrt( Kbar / ( 1 + Kbar/M ) ),
 		coherence_time: T / M
 	});
 }
 
 //======== unit tests
-/*
-function _logp0(a,k,x) {
+function _logp0(a,k,x) {  // for case 6.x testing
 	var
 		ax1 =  1 + a/x,
 		xa1 = 1 + x/a,
-		//xak = xa1**(-k),
-		//axx = ax1**(-x),
-		//gx = Gamma[x],
-		//gkx = Gamma[k + x],
 		logGx = GAMMA.log(x),
 		logGkx = GAMMA.log(k+x), 
 		logGk1 = GAMMA.log(k+1),
@@ -1518,18 +1537,14 @@ function _logp0(a,k,x) {
 		//logGk1 = logGamma[ floor(k + 1) ],
 		logp0 = logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 
-	// p0 = gkx/gx * axx * xak;
-	
 	Log(a,k,x, logp0);
 	return logp0;
-	//return exp( logp0 );
 }
-*/
 
 switch (0) {
 case 6.1:
 		var len = 150,x = 75, a = 36;
-		var floor = Math.floor, log = Math.log, exp = Math.exp;
+		//var floor = Math.floor, log = Math.log, exp = Math.exp;
 		
 		var logGamma = $(len*2 , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
@@ -1560,7 +1575,7 @@ case 6.1:
 		break;		
 	case 6:
 		var len = 150,x = 75, a = 36;
-		var floor = Math.floor, log = Math.log, exp = Math.exp;
+		//var floor = Math.floor, log = Math.log, exp = Math.exp;
 		
 		var logGamma = $(len*2 , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
