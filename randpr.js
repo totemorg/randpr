@@ -51,7 +51,7 @@ class RAN {
 			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
 						
 			// K-state config parameters
-			trP: null, 	// [KxK] from-to state tx probabilities 
+			trP: null, 	// [KxK] from-to state trans probabilities 
 
 			// K=2 state config parameters
 			alpha: 0,  // on-to-off rate [jumps/s]
@@ -78,7 +78,7 @@ class RAN {
 			R: null, 	// [KxK] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities K' <= K
-			mleP: null, 	// [KxK] from-to state mle tx probabilities
+			mleP: null, 	// [KxK] from-to state mle trans probabilities
 			corP: null, 	// [KxK] stat correlation probabilities
 			cumP: null,	// [KxK] from-to cummulative state transition probabilities
 			N0: null, 	// [KxK] from-to cummulative counts in to-state given starting from-state
@@ -99,7 +99,6 @@ class RAN {
 				// lfa: [50]			// use linear feactor analysis
 			}, 
 			
-			next: 0, 	// next time step to evaluate batch (or 0 if not batching)
 			halt: false, // default state when learning
 			Tc: 0,  // coherence time >0 [s] 
 			t: 0, 	// time
@@ -305,13 +304,12 @@ class RAN {
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
 			ctmode = this.ctmode,
+			solve = this.solve || {},
 			WU = this.WU = this.wiener ? $(N) : [],
 			WQ = this.WQ = this.wiener ? $(N) : [];
 		
 		this.t = this.s = this.samples = 0;  // initialize process counters
 
-		this.next = this.solve.batch || 0;
-		
 		// initialize ensemble
 		
 		if ( this.learn ) {  // learning mode
@@ -356,14 +354,17 @@ class RAN {
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
-		this.gamma = $(this.steps, 0);  // reserve statistical autocovariance
-
+		if ( this.steps ) {    // reserve statistical autocovariance
+			this.gamma = $(this.steps, 0);
+			this.gamma[0] = 1;
+		}
+		
 		if (cb) cb(this);
 	}
 	
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
-		function Gillespie( fr, P, R ) {  // compute cumulative tx probs P given holding times R
+		function Gillespie( fr, P, R ) {  // compute cumulative trans probs P given holding times R
 			var R0 = R[fr], K = P.length;
 			$use(P, function (to) {
 				P[to] = delta(fr,k) ? 0 : R[to] / R0;
@@ -380,7 +381,7 @@ class RAN {
 			K = this.K, R = this.R, cumP = this.cumP, A = this.A, cumH = this.cumH, cumN = this.cumN;
 
 		switch (this.jumpModel) {  // reseed jump rates if time-inhomogenous model
-			case "gillespie":  // reseed tx probs using Gillespie model (provides a time-inhomogeneous process)
+			case "gillespie":  // reseed trans probs using Gillespie model (provides a time-inhomogeneous process)
 				Gillespie( fr, cumP[fr], R[fr] );
 				break;
 
@@ -406,7 +407,6 @@ class RAN {
 	
 	end() {  // terminate process
 		this.corrTime();		
-		if (this.next) this.onBatch();
 		this.onEnd();
 	}
 	
@@ -489,7 +489,7 @@ class RAN {
 			N0[ U0[n] ][ U[n] ]++; 
 		});
 
-		$use(U, function (n) {  // adjust 1-step transition counters for computing joint (not conditional) 1-step tx probs
+		$use(U, function (n) {  // adjust 1-step transition counters for computing joint (not conditional) 1-step trans probs
 			N1[ U1[n] ][ U[n] ]++;
 		});
 
@@ -513,9 +513,9 @@ class RAN {
 		
 	start ( ) {	  // advance process with possible callbacks to onBatch()
 		var 
-			ran = this;
-			//exp = Math.exp, 
-			//log = Math.log;
+			ran = this,
+			solve = this.solve || {},
+			batch = solve.batch || 0;
 
 		if ( ran.learn ) { // learning mode
 			Log("start learn", ran.halt);
@@ -533,56 +533,24 @@ class RAN {
 						ran.end();
 					}
 
-					if ( ran.next )
-						if ( ran.s > ran.next ) ran.onBatch();
-
-					//return ran.t;
+					if ( batch )
+						if ( ran.s % batch == 0 ) ran.onBatch();
 				});
 		}
 		
 		else { // generative mode			
 			Log("start gen", ran.steps, ran.N);
+			ran.step();
+			if ( batch ) ran.onBatch();
 			while (ran.s < ran.steps) {  // advance process to end
-				if (ran.next) { // have supervised learning batches
-					while (ran.s < ran.next) ran.step(); 
-					ran.onBatch();
-				}
-
-				else
-					ran.step(); 
+				ran.step(); 
+				if ( batch )
+					if ( ran.s % batch == 0 ) ran.onBatch();
 			}
+			
 			ran.end();
 		}
 		
-/*
-		if ( ran.learn )  { // learning mode
-			if (!ran.halt)
-				ran.learn( function (evs) {  // get events batch
-					
-					if (evs) {
-						Log("feeding ran",evs.length, evs[0].t);
-						ran.step(evs);
-
-						//Log(ran.s, ran.steps, ran.next, ran.store.length);
-						if ( ran.s > ran.next ) ran.onBatch();
-					}
-					
-					else
-						ran.halt = true;
-					
-					return ran.t;
-				});
-			
-			ran.halt = true;
-		}
-		
-		else {  // generative mode
-			ran.step(); 
-			ran.onBatch();
-			for (var s=1; s<ran.batch; s++) ran.step(); 
-		}
-*/
-
 	}
 	
 	statCorr ( ) {  // statistical correlation function
@@ -599,32 +567,22 @@ class RAN {
 			});
 		});
 
-		//if ( this.s <= 1 ) this.gamma0 = cor;
-
-		return cor ; // /this.gamma0;
+		return cor ; 
 	}
 
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
 		var abs = Math.abs;
-		for (var n=1, N = this.s, Tc = 0; n<N; n++) Tc += abs(this.gamma[n]) * (1 - n/N);
+		for (var s=0, S = this.s, Tc = 0; s<S; s++) Tc += abs(this.gamma[s]) * (1 - s/S);
 		
-		this.Tc = Tc * this.dt / 2;
-		//Log("tc calc",N, Tc, this.gamma);
+		this.Tc = Tc * this.dt / this.gamma[0];
+		Log("tc calc", Tc, this.gamma);
 	}
 	
 	record (ev) {  // record event ev to store or stream
-		//Log("record", this.store?"store":"stream");
 		this.filter(this.store, ev);
-		
-		/*
-		if (this.store)
-			this.filter(this.store, ev);
-		
-		/*else
-			this.ranStream.push(ev);*/
 	}
 	
-	onBatch () {    // MLE jump rates and tx probs
+	onBatch () {    // MLE jump rates and trans probs
 		var 
 			ran = this,
 			K = this.K,
@@ -666,13 +624,11 @@ class RAN {
 			Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
 		}); */
 		this.record({
-			at:"batch",t: this.t, s: this.s,
-			rel_tr_prob_error: Perr,
-			mle_tr_prob: mleP,
-			stat_corr: this.gamma[this.s-1]
+			at:"batch",t: this.t-this.dt, s: this.s-1,
+			rel_trans_prob_error: Perr,
+			//mle_trans_prob: mleP,
+			stat_corr: this.gamma[ this.s-1 ]
 		});		
-		
-		this.next += this.solve.batch;	
 	}
 
 	onError( msg ) {
@@ -701,6 +657,7 @@ class RAN {
 	onEnd() {
 		var 
 			ran = this,
+			solve = this.solve || {},
 			T = this.t,
 			Tc = this.Tc,
 			Kbar = $avg(this.J),
@@ -713,14 +670,14 @@ class RAN {
 				ran.record({
 					at:"end", t:ran.t, s:ran.s,
 					
-					supervised: ran.next
+					supervised: solve.batch
 						? {
 							jump_rates: ran.Amle, 
-							stat_corr: ran.gamma,
+							//stat_corr: $sample(ran.gamma,solve.batch || 1),
 							mle_holding_times: ran.Rmle,
-							rel_tr_prob_error: ran.Perr,
-							mle_tr_prob: ran.mleP,
-							tx_counts: ran.N1,
+							rel_trans_prob_error: ran.Perr,
+							mle_trans_prob: ran.mleP,
+							trans_counts: ran.N1,
 							mean_count: Kbar, 
 							coherence_time: Tc, 
 							coherence_intervals: M,
@@ -748,8 +705,8 @@ class RAN {
 			ensemble_size: this.N,		
 			sample_time: this.dt,
 			jump_rates: this.A,
-			cummulative_tr_prob: this.cumP,
-			tr_prob: this.trP,
+			cummulative_trans_prob: this.cumP,
+			trans_prob: this.trP,
 			hold_times: this.R,
 			equlib_prob: this.pi,
 			initial_activity: this.p,
@@ -1086,6 +1043,15 @@ function perms(vec,dims,vecs,norm) {  //< generate permutations
 	return vecs;
 }
 
+function $sample(A, delta) {
+	var 
+		k = 0,
+		rtn = $( floor(A.length/delta), function (n, R) {
+			R[n] = A[k += delta];
+		});
+		return rtn;
+}
+
 /*
 function index(vec,dims) {  // unused
 	var idx = 0;
@@ -1113,7 +1079,6 @@ function poisson(m,a) {
 
 function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	var 
-		//log = Math.log, exp = Math.exp,
 		K = alpha.length,
 		N = x[0].length,
 		logBs = $(K, function (k,B) {
@@ -1402,9 +1367,6 @@ function eventStats(H, T, N, solve, cb) {
 	}
 	
 	var
-		//log = Math.log,	
-		//exp = Math.exp,
-		//floor = Math.floor,
 		/*
 		logGamma = $(Ktop , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
@@ -1741,7 +1703,6 @@ switch (0) {
 		
 	case 6.2:
 		var len = 150,x = 75, a = 36;
-		//var floor = Math.floor, log = Math.log, exp = Math.exp;
 		
 		var logGamma = $(len*2 , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
@@ -1773,7 +1734,6 @@ switch (0) {
 		
 	case 6.3:
 		var len = 150,x = 75, a = 36;
-		//var floor = Math.floor, log = Math.log, exp = Math.exp;
 		
 		var logGamma = $(len*2 , function (k, logG) {
 			logG[k] = (k<3) ? 0 : GAMMA.log(k);
