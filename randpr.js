@@ -1,4 +1,12 @@
 '$use strict';
+/*
+TODO
+Add method to compute the N-state tx Probs (the NxN [scriptP] matrix) from the autocorrelation model
+given its Tc parameter.  Will use the SVD approach to get a NxN [U] and [V] matries, either of 
+which can be used for [scriptP].    This [scriptP]^{some large power} * [p]  --> [equlib p] and therefore
+the [lambda] = [eqlib p] * N.
+*/
+
 /**
 @requires stream
 @requires enum
@@ -1098,23 +1106,23 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 }	
 
 function eventStats(H, T, N, solve, cb) {
-	/*
-		returns M = number of coherence intervals, SNR, etc given
-			H[k] = observation freqs at count level k
-			T = observation time
-			N = number of observations
-			solve = {compress: true/false, interpolate: true/false, lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
-			callback cb(computed stats)
-	*/
+/*
+returns M = number of coherence intervals, SNR, etc given
+	H[k] = observation freqs at count level k
+	T = observation time
+	N = number of observations
+	solve = {compress: true/false, interpolate: true/false, lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
+	callback cb(computed stats)
+*/
 	
 	function logNB(k,a,x) { // negative binomial objective function
-		/*
-		return log{ p0 } where
-			p0(x) = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k) 
-			a = <k> = average count
-			x = script M = coherence intervals
-			k = count level
-		 */
+	/*
+	return log{ p0 } where
+		p0(x) = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k) 
+		a = <k> = average count
+		x = script M = coherence intervals
+		k = count level
+	 */
 		var
 			ax1 =  1 + a/x,
 			xa1 = 1 + x/a,
@@ -1132,30 +1140,39 @@ function eventStats(H, T, N, solve, cb) {
 		return logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 	}
 	
-	function LFA(init, f, logp) {  // 1-parameter linear-factor analysis
+	function LFA(init, f, logp) {  
+	/*
+	1-parameter (x) linear-factor analysis
+	k = possibly compressed list of count bins
+	init = initial parameter values [a0, x0, ...] of length N
+	logf  = possibly compressed list of log count frequencies
+	a = Kbar = average count
+	x = M = coherence intervals		
+	*/
+		
 		function p1(k,a,x) { 
-			/*
-			return p0'(x) =
-						(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
-							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
-							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
-							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
+		/*
+		return p0'(x) =
+					(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
+						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
+						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
+						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
 
-					=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
-							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
-							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
-							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
+				=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
+						- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
+						+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
+						- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
 
-					=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
-							(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
+				=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
+						(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
 
-					= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+				= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
 
-					= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
+				= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
 
-				where
-					Psi(x) = polyGamma(0,x)
-			 */
+			where
+				Psi(x) = polyGamma(0,x)
+		 */
 			var
 				ax1 =  1 + a/x,
 				xa1 = 1 + x/a,
@@ -1170,16 +1187,16 @@ function eventStats(H, T, N, solve, cb) {
 		}
 
 		function p2(k,a,x) {  // not used
-			/*
-			return p0" = 
-					(1 + x/a)**(-k)*(a/x + 1)**(-x)*( a**2/(x**3*(a/x + 1)**2) 
-						+ (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1) )*polygamma(0, x) 
-					+ 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) 
-					+ polygamma(0, x)**2 
-					- 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) 
-					- 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) 
-					- 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
-			 */
+		/*
+		return p0" = 
+				(1 + x/a)**(-k)*(a/x + 1)**(-x)*( a**2/(x**3*(a/x + 1)**2) 
+					+ (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1) )*polygamma(0, x) 
+				+ 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) 
+				+ polygamma(0, x)**2 
+				- 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) 
+				- 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) 
+				- 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
+		 */
 			var
 				ax1 =  1 + a/x,
 				xa1 = 1 + x/a,
@@ -1206,9 +1223,9 @@ function eventStats(H, T, N, solve, cb) {
 		}
 		
 		function chiSq1(f,a,x) { 
-			/*
-			return chiSq' (x)
-			*/
+		/*
+		return chiSq' (x)
+		*/
 			var 
 				sum = 0,
 				Kmax = f.length;
@@ -1220,9 +1237,9 @@ function eventStats(H, T, N, solve, cb) {
 		}
 
 		function chiSq2(f,a,x) {
-			/*
-			return chiSq"(x)
-			*/
+		/*
+		return chiSq"(x)
+		*/
 			var
 				sum =0,
 				Kmax = f.length;
@@ -1248,16 +1265,19 @@ function eventStats(H, T, N, solve, cb) {
 		return NEWRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
 	}
 	
-	function LMA(init, k, logf, logp) {  // N-parameter levenberg-marquadt algorithm
-		/*
-			k = possibly compressed list of count bins
-			init = initial parameter values [a0, x0, ...]
-			logf  = possibly compressed list of log count frequencies
-		*/
+	function LMA(init, k, logf, logp) {  
+	/*
+	N-parameter (a,x,...) levenberg-marquadt algorithm where
+	k = possibly compressed list of count bins
+	init = initial parameter values [a0, x0, ...] of length N
+	logf  = possibly compressed list of log count frequencies
+	a = Kbar = average count
+	x = M = coherence intervals
+	*/
 		
 		switch ( init.length ) {
 			case 1:
-				return LM({  // levenberg-marquadt
+				return LM({  // 1-parm (x) levenberg-marquadt
 					x: k,  
 					y: logf
 				}, function ([x]) {
@@ -1275,8 +1295,8 @@ function eventStats(H, T, N, solve, cb) {
 			case 2:
 				
 				switch ("2stage") {
-					case "1stage":
-						return LM({  // greedy approach will often fail when LM attempts an x<0
+					case "2parm":  // greedy 2-parm (a,x) approach will often fail when LM attempts an x<0
+						return LM({  
 							x: k,  
 							y: logf  
 						}, function ([x,u]) {
@@ -1291,7 +1311,7 @@ function eventStats(H, T, N, solve, cb) {
 							errorTolerance: 10e-3
 						});
 						
-					case "2stage":
+					case "2stage":  // break 2-parm (a,x) into 2 stages
 						var
 							x0 = init[0],
 							u0 = init[1],
@@ -1331,7 +1351,15 @@ function eventStats(H, T, N, solve, cb) {
 		}
 	}
 	
-	function BFS(init, f, logp) { // 1-parameter brute force search
+	function BFS(init, f, logp) { 
+	/*
+	1-parameter (x) brute force search
+	k = possibly compressed list of count bins
+	init = initial parameter values [a0, x0, ...] of length N
+	logf  = possibly compressed list of log count frequencies
+	a = Kbar = average count
+	x = M = coherence intervals			
+	*/
 		function NegBin(NB, Kbar, M, logp) {
 			$use(NB, function (k) {
 				NB[k] = exp( logp(k, Kbar, M) );
@@ -1430,31 +1458,31 @@ function eventStats(H, T, N, solve, cb) {
 			Log(n, k, logNB(k,Kbar,55), logNB(k,Kbar,65), log( fK[k] ), logfK[n] );
 		});
 
+	var M = {};
+	
 	if ( solve.lma) {  // levenberg-marquadt algorithm for [M, ...]
-		var 
-			fits = LMA( solve.lma, K, logfK, logNB),
-			M = fits.parameterValues[0];
-
-		Log("LMA sol", fits);
+		M.fits = LMA( solve.lma, K, logfK, logNB);
+		M.lma = M.fits.parameterValues[0];
 	}
 	
 	if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  and with compression off, interpolation on
-		var M = LFA( solve.lfa, fK, logNB);
-		Log("LFA sol",M);
+		M.lfa = LFA( solve.lfa, fK, logNB);
 	}
 	
 	if (solve.bfs) { // brute force search for M
-		var M = BFS( solve.bfs, fK, logNB);
-		Log("BFS sol", M);
+		M.bfs = BFS( solve.bfs, fK, logNB);
 	}
+
+	var M0 = m[solve.use || "lfa"];
 	
 	cb({
-		coherence_intervals: M,
+		fits: {solver: solve.use, solution: M},		
+		coherence_intervals: M0,
 		mean_count: Kbar,
 		mean_rate: Kbar / T,
-		degeneracy_param: Kbar / M,
-		snr: sqrt( Kbar / ( 1 + Kbar/M ) ),
-		coherence_time: T / M
+		degeneracy_param: Kbar / M0,
+		snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
+		coherence_time: T / M0
 	});
 }
 
