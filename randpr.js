@@ -1473,7 +1473,7 @@ returns M = number of coherence intervals, SNR, etc given
 		M.bfs = BFS( solve.bfs, fK, logNB);
 	}
 
-	var M0 = m[solve.use || "lfa"];
+	var M0 = M[solve.use || "lfa"];
 	
 	cb({
 		fits: {solver: solve.use, solution: M},		
@@ -1482,7 +1482,8 @@ returns M = number of coherence intervals, SNR, etc given
 		mean_rate: Kbar / T,
 		degeneracy_param: Kbar / M0,
 		snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
-		coherence_time: T / M0
+		coherence_time: T / M0,
+		fit_stats: M
 	});
 }
 
