@@ -27,7 +27,7 @@ var 		// external modules
 	JSLIB = require("jslab").libs,
 	MATH = JSLIB.MATH,
 	GAMMA = JSLIB.GAMMA,
-	NEWRAP = JSLIB.NEWRAP,
+	NRAP = JSLIB.NRAP,
 	LM = JSLIB.LM,
 	ZETA = JSLIB.ZETA;
 
@@ -1262,7 +1262,7 @@ returns M = number of coherence intervals, SNR, etc given
 				P[x] = x ? P[x-1] + 1/x : Psi1;
 			});
 		
-		return NEWRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
+		return NRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
 	}
 	
 	function LMA(init, k, logf, logp) {  
