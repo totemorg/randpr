@@ -427,7 +427,12 @@ class RAN {
 			jumps[ J[n] ]++;
 		});
 		
-		eventStats(jumps, this.t, this.N, solve, cb);	
+		eventStats(jumps, this.t, this.N, solve, function (stats) {
+			txprobs(stats.coherence_time, function (txP) {
+				stats.unsupervised.trans_probs = txP;
+				cb( stats );
+			});			
+		});	
 	}
 		
 	step (evs) {  // advance process forward one step
