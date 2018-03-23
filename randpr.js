@@ -4,7 +4,8 @@ TODO
 Add method to compute the N-state tx Probs (the NxN [scriptP] matrix) from the autocorrelation model
 given its Tc parameter.  Will use the SVD approach to get a NxN [U] and [V] matries, either of 
 which can be used for [scriptP].    This [scriptP]^{some large power} * [p]  --> [equlib p] and therefore
-the [lambda] = [eqlib p] * N.
+the [lambda] = [eqlib p] * N. And/or KL the gamma corelation model for the eignvalues, the some of
+which is the integrated intensity.
 */
 
 /**
@@ -54,7 +55,7 @@ class RAN {
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
 			nyquist: 1, // nyquist oversampling rate = 1/dt
-			steps: 10, // number of process steps of size dt
+			steps: 0, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
 						
@@ -121,13 +122,196 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			obs = this.obs, // emission spec
-			trP = this.trP,  // K-state spec
+			trP = this.trP || {},  // K-state spec
 			K = this.K, // K-state spec
-			alpha = this.alpha, // 2-state spec
-			p = this.p, // 2-state spec
+			obs = this.obs,
+			nyquist = this.nyquist,
+			dt = this.dt = 1/nyquist,			
 			symbols = this.symbols;  // state symbols
 
+		if ( this.p ) {   // two-state process via p,Tc
+			var
+				p = this.p,
+				Tc = this.Tc, 
+				meanrate = 2.3/Tc,
+				rate = 2*meanrate,
+				alpha = p * rate,
+				beta = rate - alpha,
+				q = beta / rate;
+			
+			K = this.K = 2;
+			trP = this.trP = [[1-p, p], [q, 1-q]];
+		}
+
+		else
+		if ( this.alpha  )  { // two-state process via alpha,beta
+			var 
+				alpha = this.alpha,
+				beta = this.beta, 
+				p = alpha / (alpha + beta), 
+				q = beta / (alpha + beta);
+			
+			K = this.K = 2;
+			trP = this.trP = [[1-p, p], [q, 1-q]];
+		}
+
+		else
+		if ( obs ) {
+			var	
+				dims = obs.dims,
+				states = 1,
+				drop = $use(dims, (n,D) => states *= D[n] ),
+				K = this.K = states,
+				weights = obs.weights,
+				D = dims.length,
+				grid = obs.grid = perms( [], dims, []),  // state grid	
+				mus = obs.mu = [],
+				sigmas = obs.sigma = [],
+				emP = obs.emP = $(K, function (k,gen) { // gauss mixing (mu,sigma) parms 
+					var 
+						n = 0,
+
+						mu = $(D, (i,mu) =>
+							mu[i] = grid[k][n++] + 0.5 + (rand() - 0.5)*weights[i]
+						),
+
+						L = $$(D,D, (i,j, L) => 	// lower trianular $$ with real, positive diagonal
+							L[i][j] = (i <= j ) ? rand() : 0
+						), 
+
+						sigma = $$(D,D, function (i,j, A) { // hermitian pos-def $$ via cholesky decomp
+							var dot = 0;
+							$use(L, function (n) {
+								dot += L[i][n] * L[j][n];
+							});
+							A[i][j] = dot * weights[i] * weights[j]
+						});
+					
+					mus.push( mu );
+					sigmas.push( sigma );
+
+					gen[k] = RAN.MVN( mu, sigma );
+				});
+
+			//Log(obs.mu, obs.sigma);
+		}
+		
+		else			
+		if ( !K )
+			K = this.K = trP.length || 2;
+		
+		switch ( trP.constructor ) {
+			case Object: 
+				var
+					P = $$(K, K, (fr,to,A) => A[fr][to] = 0),
+					dims = obs ? obs.dims : [K];
+
+				for (var frKey in trP) {
+					var 
+						frP = trP[frKey],
+						frIndex = index( frKey.split(","), dims );
+
+					//Log("fr", frKey, frIndex);
+
+					for (var toKey in frP) {
+						var toIndex = index( toKey.split(","), dims );
+						P[frIndex][toIndex] = frP[toKey];
+					}
+				}
+
+				balanceProbs(P);
+				trP = this.trP = P;
+				break;
+				
+			case String:
+				switch (trP) {
+					case "random":
+						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
+						$use(trP, function (fr) {
+							var 
+								P = trP[fr],
+								sum = $sum( P );
+							
+							$use(P, (to,P) => P[to] /= sum);
+						});
+						break;
+				}
+				break;
+				
+			case Array:
+				var
+					N = trP.length, 
+					M = trP[0].length,
+					P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<N && to<M) ? trP[fr][to] : 0 );
+				
+				trP = this.trP = P;
+				break;
+		}
+		
+		/*
+		var
+			weights = obs.weights || [1],  // D-dimensional weights to random mixing parms
+			parts = obs.parts || [1],  // D-dimensional partitions states to D-dimensional state grid
+			D = weights.length,  // dimension of grid
+			dims = obs.dims = $( parts.length, function (n,dims) {  // grid dimensions
+				dims[n] = Math.round(parts[n] * K);
+			}),
+			grid = obs.grid = perms( [], dims, []) ; // state grid
+
+		Log("weights=",weights,"dims=",dims,"grid=",grid);
+		obs.emP = $(K, function (k,gens) { // gen gauss mixing (mu,sigma) parms at each grid state
+			var 
+				n = 0,
+
+				mu = $(D, function (i,mu) {
+					mu[i] = weights[i] ? rand()*weights[i] : grid[k][n++];
+				}),
+
+				L = $$(D,D, function (i,j, L) { // lower trianular $$ with real, positive diagonal
+					L[i][j] = (i <= j ) ? rand() : 0;
+				}),
+
+				sigma = $$(D,D, function (i,j, A) { // hermitian pos-def $$ via cholesky decomp
+					var dot = 0;
+					$use(L, function (n) {
+						dot += L[i][n] * L[j][n];
+					});
+					A[i][j] = dot * weights[i] * weights[j]
+				});
+
+			Log(k,mu,sigma);
+			gens[k] = RAN.MVN( mu, sigma );
+		});
+	*/
+		
+		/*
+		var   // to be revised with dirchlict allocation
+			trP = this.trP = $$(K, K, function (fr,to,P) {  
+				P[fr][to] = rand();
+			});
+
+		$use(trP, function (fr) {
+			$sum(trP[fr], function (sum, P) {
+				$use(P, function (to) {
+					P[to] /= sum;
+				});
+			});
+		});
+		*/
+
+		/*
+		var
+			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
+			A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
+				A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
+			}) ), 
+			pi = this.pi = $(K, function (k,pi) {  // eq state probs
+				pi[k] = 1/R[k][k];
+			}),
+			ab = this.ab = firstAbsorbTimes(trP);			
+		*/
+		
+		/*
 		if ( this.learn ) { // learning mode
 			var
 				K = this.K,
@@ -144,40 +328,22 @@ class RAN {
 		}
 		
 		else
-		if ( trP ) {  // K-state process via from-to transition probs
-			var 
-				K = this.K = trP.length,
-				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-				nyquist = this.nyquist,
-				dt = this.dt = 1/nyquist,
-				A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
-						A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
-					}) ),
-				pi = this.pi = $(K, function (k,pi) {  // eq state probs
-						pi[k] = 1/R[k][k];
-					}),
-				ab = this.ab = firstAbsorbTimes(trP);
-			
-			//Log(trP,K,ab,R);
-		}
+		*/
+		
+		var 
+			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
+			ab = this.ab = firstAbsorbTimes(trP),
+			/*
+			A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
+				A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
+			}) ), */
+			pi = this.pi = $(K, (k,pi) =>  // eq state probs
+				pi[k] = 1/R[k][k]
+			);
 
+		/*
 		else
-		if ( alpha  )  { // two-state process via alpha,beta,nyquist
-			var 
-				beta = this.beta, 
-				p = alpha / (alpha + beta), 
-				q = 1 - p,
-				K = this.K = 2,
-				A = this.A = [[-alpha, alpha], [beta, -beta]],
-				//lambda = this.lambda = avgRate(A),
-				fb = 1 / Tc, // process bandwidth
-				fs = fb * this.nyquist, // sample rate
-				dt = this.dt = 1/fs, // sample time
-				pi = this.pi = [p, q];	
-		}
-
-		else
-		if ( p )  { // two-state process via p,Tc,nyquist
+		if ( p )  {
 			var
 				Tc = this.Tc, 
 				q = 1 - p,
@@ -190,8 +356,9 @@ class RAN {
 				fs = fb * this.nyquist, // sample rate
 				dt = this.dt = 1/fs, // sample time
 				pi = this.pi = [p, q];
-		}
+		} */
 
+		/*
 		else
 		if ( K ) { // K-state process from K^2 - K random rates and nyquist
 			var   // to be revised with dirchlict allocation
@@ -218,8 +385,9 @@ class RAN {
 						pi[k] = 1/R[k][k];
 					}),
 				ab = this.ab = firstAbsorbTimes(trP);			
-		}
+		}*/
 		
+		/*
 		else { // K-state process from jump rates and nyquist
 			var
 				K = this.K = A.length,
@@ -228,43 +396,9 @@ class RAN {
 				fb = 1 / Tc, // process bandwidth
 				fs = fb * this.nyquist, // sample rate
 				dt = this.dt = 1/fs;  // sample time
-		}
+		}  */
 		
-		if ( obs ) {  // configure observation mixing parameters
-			var
-				weights = obs.weights || [1],  // D-dimensional weights to random mixing parms
-				parts = obs.parts || [1],  // D-dimensional partitions states to D-dimensional state grid
-				D = weights.length,  // dimension of grid
-				dims = obs.dims = $( parts.length, function (n,dims) {  // grid dimensions
-					dims[n] = Math.round(parts[n] * K);
-				}),
-				grid = obs.grid = perms( [], dims, []) ; // state grid
-		
-			Log("weights=",weights,"dims=",dims,"grid=",grid);
-			obs.emP = $(K, function (k,gens) { // gen gauss mixing (mu,sigma) parms at each grid state
-				var 
-					n = 0,
-
-					mu = $(D, function (i,mu) {
-						mu[i] = weights[i] ? rand()*weights[i] : grid[k][n++];
-					}),
-
-					L = $$(D,D, function (i,j, L) { // lower trianular $$ with real, positive diagonal
-						L[i][j] = (i <= j ) ? rand() : 0;
-					}),
-
-					sigma = $$(D,D, function (i,j, A) { // hermitian pos-def $$ via cholesky decomp
-						var dot = 0;
-						$use(L, function (n) {
-							dot += L[i][n] * L[j][n];
-						});
-						A[i][j] = dot * weights[i] * weights[j]
-					});
-
-				Log(k,mu,sigma);
-				gens[k] = RAN.MVN( mu, sigma );
-			});
-		}
+		Log(K, trP, R, ab, pi);
 		
 		if ( !symbols ) {  // default state symbols
 			var symbols = this.symbols = $(K);
@@ -288,26 +422,25 @@ class RAN {
 
 		// allocate the ensemble
 		var 
-			Amle = this.Amle = $$(K,K),
+			//Amle = this.Amle = $$(K,K),
 			//lambda = this.lambda = avgRate(this.A),
-			//Tc = this.Tc = 1/lambda,				
+			//Tc = this.Tc = 1/lambda,	
+			zero = (i,j,A) => A[i][j] = 0,	
 			U1 = this.U1 = $(N),
-			J = this.J = $(N,0),
+			J = this.J = $(N, (i,A) => A[i] = 0),
 			Y = this.Y = $(N),
-			N1 = this.N1 = $$(K,K,0),	
-			mleP = this.mleP = $$(K,K,0), 
-			cumH = this.cumH = $$(K,K,0),
-			cumN = this.cumN = $$(K,K,0),
-			cumP = this.cumP = $$(K,K,trP),
+			N1 = this.N1 = $$(K,K,zero),	
+			mleP = this.mleP = $$(K,K,zero), 
+			cumH = this.cumH = $$(K,K,zero),
+			cumN = this.cumN = $$(K,K,zero),
+			cumP = this.cumP = $$(K,K,(fr,to,P) => P[fr][to] = trP[fr][to] ),
 			Rmle = this.Rmle = $$(K,K),
 			Perr = this.Perr = 1,
 			corP = this.corP = $$(K,K),
 			obs=this.obs,
 			p = 1/K,
 			Np = p * N,
-			N0 = this.N0 = $$(K,K,function (fr,to,N0) {
-				N0[fr][to] = delta(fr,to) ? Np : 0
-			}),
+			N0 = this.N0 = $$(K,K, (fr,to,N0) => N0[fr][to] = delta(fr,to) ? Np : 0 ),
 			H = this.H = $(N),
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
@@ -363,7 +496,7 @@ class RAN {
 		}
 
 		if ( this.steps ) {    // reserve statistical autocovariance
-			this.gamma = $(this.steps, 0);
+			this.gamma = $(this.steps, (n,A) => A[n] =0 );
 			this.gamma[0] = 1;
 		}
 		
@@ -421,15 +554,15 @@ class RAN {
 	jumpStats(solve, cb) {
 		var 
 			J = this.J,  // number of  state jumps (aka events) made by each member in the ensemble
-			jumps = this.jumps = $(max(J)+1, 0);
+			jumps = this.jumps = $(max(J)+1, (n,A) => A[n] =0 );
 			
 		$use(J, function (n) {  // count frequencies across the ensemble
 			jumps[ J[n] ]++;
 		});
 		
 		eventStats(jumps, this.t, this.N, solve, function (stats) {
-			txprobs(stats.coherence_time, function (txP) {
-				stats.unsupervised.trans_probs = txP;
+			extStats(stats.coherence_time, "negexp", function (xstats) {
+				Copy( xstats, stats.unsupervised );
 				cb( stats );
 			});			
 		});	
@@ -445,7 +578,8 @@ class RAN {
 		
 		ran.gamma[s] = ran.statCorr();
 
-		$use(U1,U);  // hold current states U in the U1 buffer used to update the N1 counters
+		//$use(U1,U);  // hold current states U in the U1 buffer used to update the N1 counters
+		$use(U, (n) => U1[n] = U[n]);
 		
 		if (evs) { // learning mode 
 			if (!t) { // initialize states at t=0
@@ -454,8 +588,10 @@ class RAN {
 					U[ n ] = ev.u || 0;  // state = 0 if unsupervised
 					Y[ n ] = [ev.x, ev.y, ev.z];  // observations
 				});
-				$use(U0, U);
-				$use(U1, U);
+				//$use(U0, U);
+				//$use(U1, U);
+				$use(U, (n) => U0[n] = U[n]);
+				$use(U, (n) => U1[n] = U[n]);	
 			}
 				
 			evs.each(function (n,ev) {   // assume events have been time-ordered
@@ -606,7 +742,7 @@ class RAN {
 			R = this.R,
 			trP = this.trP,
 			nyquist = this.nyquist,
-			Amle = this.Amle,
+			//Amle = this.Amle,
 			Rmle = this.Rmle,
 			N1 = this.N1,
 			max = Math.max,
@@ -614,14 +750,15 @@ class RAN {
 		
 		$$use(Rmle, function (fr,to) {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
 			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
-			Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
+			//Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
 		
 		//this.lambda = avgRate(this.Amle);
 
 		$use(N1, function (fr) {  // estimate transition probs using the 1-step state transition counts
-			$sum(N1[fr], function (sum, N) {
-				$use(mleP[fr], function (to, P) {
+			var N = N1[fr], P = mleP[fr];
+			$sum( N, function (sum) {
+				$use( P, function (to) {
 					P[to] = N[to] / sum;
 				});
 			});
@@ -685,7 +822,7 @@ class RAN {
 					
 					supervised: solve.batch
 						? {
-							jump_rates: ran.Amle, 
+							//jump_rates: ran.Amle, 
 							//stat_corr: $sample(ran.gamma,solve.batch || 1),
 							mle_holding_times: ran.Rmle,
 							rel_trans_prob_error: ran.Perr,
@@ -712,6 +849,8 @@ class RAN {
 	}
 
 	onConfig() {
+		var obs = this.obs;
+		
 		this.record({
 			at: "config", t: this.t, s: this.s,
 			states: this.K,
@@ -724,6 +863,12 @@ class RAN {
 			equlib_prob: this.pi,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
+			mixing: obs 
+				? {
+					mu: obs.mu,
+					sigma: obs.sigma
+				} 
+				: null,
 			//avg_jump_rate: this.lambda,
 			//exp_coherence_time: this.Tc,
 			run_steps: this.steps,
@@ -835,6 +980,7 @@ function $$(M,N,cb) {  // create matrix A with callback cb(m,n,A,A[m](, or set t
 function $$use(A,cb) {  // use matrix A with callback cb(m,n,A, A[m]), or set to cb matrix or cb value.
 	var M = A.length, N = A[0].length;
 	
+	/*
 	if (cb != undefined) 
 		if (cb.constructor == Function)
 			for (var m=0; m<M; m++)
@@ -848,7 +994,8 @@ function $$use(A,cb) {  // use matrix A with callback cb(m,n,A, A[m]), or set to
 		else
 			for (var m=0; m<M; m++)
 				for (var n=0, Am = A[m]; n<N; n++) Am[n] = cb;
-	
+	*/
+	if (cb) for (var m=0; m<M; m++) for (var n=0, Am = A[m]; n<N; n++) cb(m,n,A,Am);
 	return A;
 }
 
@@ -856,8 +1003,9 @@ function $(N,cb) {  // create vector A with callback cb(idx,A)
 	return $use(new Array(N),cb);
 }
 
-function $use(A,cb) {	// use vector A with callback cb(idx,A), or set to cb vector or set cb value
+function $use(A,cb) {	// use vector A with callback cb(idx,A)
 	var N = A.length;
+	/*
 	if (cb != undefined)
 		if (cb.constructor == Function)
 			for (var n=0,N=A.length; n<N; n++) cb(n,A);
@@ -868,7 +1016,8 @@ function $use(A,cb) {	// use vector A with callback cb(idx,A), or set to cb vect
 	
 		else
 			for (var n=0,N=A.length; n<N; n++) A[n] = cb;
-	
+	*/
+	if (cb) for (var n=0,N=A.length; n<N; n++) cb(n,A);
 	return A;
 }	
 		
@@ -1021,7 +1170,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	
 	if ( scope.Adet < 1e-3 && K>2 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
-		return $$(K,K,0);
+		return $$(K,K, (i,j,A) => A[i][j] = 0 );
 	}
 		
 	else {
@@ -1059,9 +1208,7 @@ function perms(vec,dims,vecs,norm) {  //< generate permutations
 function $sample(A, delta) {
 	var 
 		k = 0,
-		rtn = $( floor(A.length/delta), function (n, R) {
-			R[n] = A[k += delta];
-		});
+		rtn = $( floor(A.length/delta), (n,R) => R[n] = A[k += delta] );
 		return rtn;
 }
 
@@ -1094,21 +1241,21 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	var 
 		K = alpha.length,
 		N = x[0].length,
-		logBs = $(K, function (k,B) {
-			B[k] = GAMMA.log( alpha[k] );
-		}),
+		logBs = $(K, (k,B) => B[k] = GAMMA.log( alpha[k] ) ),
 		logB = $sum(logBs) - GAMMA.log( $sum(alpha) );
 	
-	$use(grid, function (n,x) {
+	$use( x = grid, function (n) {
 		var
-			logAs = $(K, function (k,A) {
-				A[k] = (alpha[k] - 1) * log( x[k] );
-			}),
+			logAs = $(K, (k,A) => A[k] = (alpha[k] - 1) * log( x[k] ) ),
 			logA = $sum(logAs);
 	
 		logP[n] = logA - logB;
 	});
 }	
+
+function extStats( Tc, model, cb) {
+	cb({});
+}
 
 function eventStats(H, T, N, solve, cb) {
 /*
@@ -1258,14 +1405,14 @@ returns M = number of coherence intervals, SNR, etc given
 		var
 			Mmax = 400,
 			Kmax = f.length + Mmax,
-			eps = $(Kmax, 1e-3),
-			Zeta = $(Kmax, function (k,Z) {
-				Z[k] = k ? ZETA(k+1) : -0.57721566490153286060; // -Z[0] = euler-masheroni constant
-			}),
+			eps = $(Kmax, (k,A) => A[k] = 1e-3),
+			Zeta = $(Kmax, (k,Z) => 
+				Z[k] = k ? ZETA(k+1) : -0.57721566490153286060   // -Z[0] is euler-masheroni constant
+			), 
 			Psi1 = $sum(Zeta),
-			Psi = $(Kmax, function (x, P) {  // recurrence to build the diGamma Psi
-				P[x] = x ? P[x-1] + 1/x : Psi1;
-			});
+			Psi = $(Kmax, (x,P) =>   // recurrence to build the diGamma Psi
+					P[x] = x ? P[x-1] + 1/x : Psi1 
+			);
 		
 		return NRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
 	}
@@ -1492,6 +1639,21 @@ returns M = number of coherence intervals, SNR, etc given
 	});
 }
 
+function index(keys, dims) {
+	var N  = dims.length, idx = 0, off = 1;
+	
+	if (keys.length == 1)
+		idx = parseInt(keys[0]);
+	
+	else
+		for (var n=0; n<N; off *= dims[n], n++) 
+			idx += off * parseInt( keys[n] );
+
+	//Log( keys, idx);
+	
+	return idx;
+}
+
 //======== unit tests
 function _logp0(a,k,x) {  // for case 6.x testing
 	var
@@ -1522,6 +1684,41 @@ switch (0) {
 			//[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 			 [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]  // no absorbing stats
 		));
+		break;
+		
+	case 2.1:  // config methods
+		var ran = new RAN({
+			trP: [[0.1, 0.9], [0.1, 0.9]],  
+		});
+		break;
+
+	case 2.2:
+		var ran = new RAN({
+			K: 3,
+			trP: { 0: {1: 0.9}, 1: {0: 0.1} }
+		});
+		break;
+
+	case 2.3:
+		var ran = new RAN({
+			K: 9,
+			obs: {
+				dims: [3,3],
+				weights: [1,1]
+			},
+			trP: { 0: {1: 0.9}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
+		});
+		break;
+		
+	case 2.4:
+		var ran = new RAN({
+			K: 8,
+			obs: {
+				dims: [2,2,2],
+				weights: [1,1,1]
+			},
+			trP: "random"
+		});
 		break;
 		
 	case 3:  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
@@ -1738,9 +1935,9 @@ switch (0) {
 	case 6.2:
 		var len = 150,x = 75, a = 36;
 		
-		var logGamma = $(len*2 , function (k, logG) {
-			logG[k] = (k<3) ? 0 : GAMMA.log(k);
-		});
+		var logGamma = $(len*2 , (k, logG) =>
+			logG[k] = (k<3) ? 0 : GAMMA.log(k)
+		);
 		
 		var p0map = function ([a]) {
 			 Log(a,x);
@@ -1769,9 +1966,9 @@ switch (0) {
 	case 6.3:
 		var len = 150,x = 75, a = 36;
 		
-		var logGamma = $(len*2 , function (k, logG) {
-			logG[k] = (k<3) ? 0 : GAMMA.log(k);
-		});
+		var logGamma = $(len*2 , (k, logG) =>
+			logG[k] = (k<3) ? 0 : GAMMA.log(k)
+		);
 		
 		var p0map = function ([a,x]) {
 			 Log(a,x);
