@@ -122,7 +122,7 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			trP = this.trP || {},  // K-state spec
+			trP = this.trP, // || {},  // K-state spec
 			K = this.K, // K-state spec
 			obs = this.obs,
 			nyquist = this.nyquist,
@@ -196,57 +196,64 @@ class RAN {
 			//Log(obs.mu, obs.sigma);
 		}
 		
+		/*
 		else			
 		if ( !K )
 			K = this.K = trP.length || 2;
+		*/
 		
-		switch ( trP.constructor ) {
-			case Object: 
-				var
-					P = $$(K, K, (fr,to,A) => A[fr][to] = 0),
-					dims = obs ? obs.dims : [K];
+		if (trP)
+			switch ( trP.constructor ) {
+				case Object: 
+					var
+						P = $$(K, K, (fr,to,A) => A[fr][to] = 0),
+						dims = obs ? obs.dims : [K];
 
-				for (var frKey in trP) {
-					var 
-						frP = trP[frKey],
-						frIndex = index( frKey.split(","), dims );
+					for (var frKey in trP) {
+						var 
+							frP = trP[frKey],
+							frIndex = index( frKey.split(","), dims );
 
-					//Log("fr", frKey, frIndex);
+						//Log("fr", frKey, frIndex);
 
-					for (var toKey in frP) {
-						var toIndex = index( toKey.split(","), dims );
-						P[frIndex][toIndex] = frP[toKey];
+						for (var toKey in frP) {
+							var toIndex = index( toKey.split(","), dims );
+							P[frIndex][toIndex] = frP[toKey];
+						}
 					}
-				}
 
-				balanceProbs(P);
-				trP = this.trP = P;
-				break;
-				
-			case String:
-				switch (trP) {
-					case "random":
-						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
-						$use(trP, function (fr) {
-							var 
-								P = trP[fr],
-								sum = $sum( P );
-							
-							$use(P, (to,P) => P[to] /= sum);
-						});
-						break;
-				}
-				break;
-				
-			case Array:
-				var
-					N = trP.length, 
-					M = trP[0].length,
-					P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<N && to<M) ? trP[fr][to] : 0 );
-				
-				trP = this.trP = P;
-				break;
-		}
+					balanceProbs(P);
+					trP = this.trP = P;
+					break;
+
+				case String:
+					switch (trP) {
+						case "random":
+							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
+							$use(trP, function (fr) {
+								var 
+									P = trP[fr],
+									sum = $sum( P );
+
+								$use(P, (to,P) => P[to] /= sum);
+							});
+							break;
+					}
+					break;
+
+				case Array:
+					var
+						N = trP.length, 
+						M = trP[0].length,
+						K = this.K = K || N,
+						P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<N && to<M) ? trP[fr][to] : 0 );
+
+					trP = this.trP = P;
+					break;
+			}
+		
+		else
+			return;
 		
 		/*
 		var
@@ -702,6 +709,36 @@ class RAN {
 		
 	}
 	
+	sinc( T, N, M ) {
+		var 
+			sin = Math.sin,
+			Tc = T/M,
+			dt = T/2/N,
+			a = Math.PI * dt / Tc;
+		
+		return $$( N, N, (m,n,A) => {
+			if ( m == n ) 
+				A[m][n] = 1;
+			else
+			if ( n > m ) {
+				var x = a * (n-m);
+				A[m][n] = sin( x ) / x;
+				//Log(m,n-m,x,A[m][n]);
+			}
+			else
+				A[m][n] = A[n][m];
+		});
+	}
+		
+	KL( A, cb) {
+		var N = A.length;
+		
+		cb({
+			values: $(N, (n) => 0),
+			vectors: []
+		});	
+	}
+		
 	statCorr ( ) {  // statistical correlation function
 		
 		this.samples += this.N;
