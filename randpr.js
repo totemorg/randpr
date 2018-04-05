@@ -26,7 +26,7 @@ var			// nodejs modules
 
 var 		// external modules
 	JSLIB = require("jslab").libs,
-	MATH = JSLIB.MATH,
+	ME = JSLIB.ME,
 	GAMMA = JSLIB.GAMMA,
 	NRAP = JSLIB.NRAP,
 	LM = JSLIB.LM,
@@ -731,12 +731,19 @@ class RAN {
 	}
 		
 	KL( A, cb) {
-		var N = A.length;
+		var ctx = {
+			//A: ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) //ME.matrix(A)
+			A: ME.matrix(A)
+		};
 		
-		cb({
-			values: $(N, (n) => 0),
-			vectors: []
-		});	
+		ME.eval("R=evd(A); ", ctx);
+		
+		//Log("lambda", ctx.R.values._data);
+		//var N = A.length;
+		//Log("e", ctx.e._data);  e=R.vectors'*R.vectors; 
+		//Log("x", ctx.x._data[N-1]);  x=R.vectors*diag(R.values); 
+		//Log("y", ctx.y._data[N-1]);	 y = A*R.vectors; 
+		cb( ctx.R );
 	}
 		
 	statCorr ( ) {  // statistical correlation function
@@ -1009,13 +1016,16 @@ function avgRate(A) {  // computes average jump rate in A not necessarily balanc
 	
 function $$(M,N,cb) {  // create matrix A with callback cb(m,n,A,A[m](, or set to cb matrix or value.
 	var A = new Array(M);
+	
+	A.rows = M;
+	A.columns = N;
 	for (var m=0; m<M; m++) A[m] = new Array(N);
 	
 	return $$use(A,cb);
 }
 
 function $$use(A,cb) {  // use matrix A with callback cb(m,n,A, A[m]), or set to cb matrix or cb value.
-	var M = A.length, N = A[0].length;
+	var M = A.rows, N = A.columns;
 	
 	/*
 	if (cb != undefined) 
@@ -1131,7 +1141,6 @@ function Trace(msg,arg) {
 
 function firstAbsorbTimes(P) {  //< compute first absorption times
 	var 
-		M = MATH,
 		K = P.length,
 		kAb = [],
 		kTr = [],
@@ -1141,23 +1150,23 @@ function firstAbsorbTimes(P) {  //< compute first absorption times
 			else
 				kTr.push(k+1);
 		}),
-		scope = {
-			P: M.matrix(P),
+		ctx = {
+			P: ME.matrix(P),
 			K: K,
-			kAb: M.matrix(kAb),
-			kTr: M.matrix(kTr),
+			kAb: ME.matrix(kAb),
+			kTr: ME.matrix(kTr),
 			nAb: kAb.length,
 			nTr: kTr.length,
-			abT: M.matrix([]),
-			abP: M.matrix([])
+			abT: ME.matrix([]),
+			abP: ME.matrix([])
 		};
 	
-	if ( scope.nAb>1 )
-		M.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", scope);
+	if ( ctx.nAb>1 )
+		ME.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", ctx);
 		
 	return {
-		abT: scope.abT._data,
-		abP: scope.abP._data
+		abT: ctx.abT._data,
+		abP: ctx.abP._data
 	};
 }
 
@@ -1194,33 +1203,32 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 */	
 
 	var 
-		M = MATH,
-		scope = {
-			P: M.matrix(P),
+		ctx = {
+			P: ME.matrix(P),
 			K: P.length
 		},
-		K = scope.K;
+		K = ctx.K;
 
-	M.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = det(A); ", scope);
+	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = det(A); ", ctx);
 	
-	//Log("det",scope.Adet);
+	//Log("det",ctx.Adet);
 	
-	if ( scope.Adet < 1e-3 && K>2 ) {
+	if ( ctx.Adet < 1e-3 && K>2 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", M.pow(P,20));
 		return $$(K,K, (i,j,A) => A[i][j] = 0 );
 	}
 		
 	else {
-		M.eval("wk= -Pu*inv(A);", scope);
+		ME.eval("wk= -Pu*inv(A);", ctx);
 
-		scope.w = M.matrix([1].concat(scope.wk._data[0]));
+		ctx.w = ME.matrix([1].concat(ctx.wk._data[0]));
 
-		M.eval("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", scope);
+		ME.eval("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
 
 		var 
-			H = scope.H._data,
-			Z = scope.Z._data,
-			w = scope.w._data[0];
+			H = ctx.H._data,
+			Z = ctx.Z._data,
+			w = ctx.w._data[0];
 
 		for (var fr=0;fr<K; fr++) 
 			for (var to=0; to<K; to++) 
@@ -1329,7 +1337,7 @@ returns M = number of coherence intervals, SNR, etc given
 		return logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
 	}
 	
-	function LFA(init, f, logp) {  
+	function LFA(init, f, logp) {  // linear-factor-analysis (via newton raphson) for chi^2 extrema - use at your own risk
 	/*
 	1-parameter (x) linear-factor analysis
 	k = possibly compressed list of count bins
@@ -1454,7 +1462,7 @@ returns M = number of coherence intervals, SNR, etc given
 		return NRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
 	}
 	
-	function LMA(init, k, logf, logp) {  
+	function LMA(init, k, logf, logp) {  // levenberg-marquart algorithm for chi^2 extrema
 	/*
 	N-parameter (a,x,...) levenberg-marquadt algorithm where
 	k = possibly compressed list of count bins
@@ -1540,7 +1548,7 @@ returns M = number of coherence intervals, SNR, etc given
 		}
 	}
 	
-	function BFS(init, f, logp) { 
+	function BFS(init, f, logp) {   // brute-force-search for chi^2 extrema
 	/*
 	1-parameter (x) brute force search
 	k = possibly compressed list of count bins
