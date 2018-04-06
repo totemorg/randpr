@@ -42,6 +42,8 @@ var															// shortcuts
 
 var
 	sqrt = Math.sqrt, floor = Math.floor, rand = Math.random,
+	cos = Math.cos, sin = Math.sin,
+	abs = Math.abs, PI = Math.PI,
 	log = Math.log, exp = Math.exp;
 
 class RAN {
@@ -108,6 +110,11 @@ class RAN {
 				// lfa: [50]			// use linear feactor analysis
 			}, 
 			
+			// KL model parms
+			models: ["sinc"],  // models to generate via model() method
+			Mmax: 20, // max number of coherence intervals to model
+			
+			// sampling parms
 			halt: false, // default state when learning
 			Tc: 0,  // coherence time >0 [s] 
 			t: 0, 	// time
@@ -541,7 +548,7 @@ class RAN {
 
 		// get new state by taking a random jump according to cummulative P[fr,to]
 			
-		for (var Pfr = cumP[fr], u=Math.random(), to=0; to < K && Pfr[to] <= u; to++) ;
+		for (var Pfr = cumP[fr], u=rand(), to=0; to < K && Pfr[to] <= u; to++) ;
 		if (to == K) to--;
   		
 		if ( fr != to ) {  // take jump
@@ -561,18 +568,13 @@ class RAN {
 	jumpStats(solve, cb) {
 		var 
 			J = this.J,  // number of  state jumps (aka events) made by each member in the ensemble
-			jumps = this.jumps = $(max(J)+1, (n,A) => A[n] =0 );
+			jumps = this.jumps = $( $max(J)+1, (n,A) => A[n] =0 );
 			
 		$use(J, function (n) {  // count frequencies across the ensemble
 			jumps[ J[n] ]++;
 		});
 		
-		eventStats(jumps, this.t, this.N, solve, function (stats) {
-			extStats(stats.coherence_time, "negexp", function (xstats) {
-				Copy( xstats, stats.unsupervised );
-				cb( stats );
-			});			
-		});	
+		eventStats(jumps, this.t, this.N, solve, cb);	
 	}
 		
 	step (evs) {  // advance process forward one step
@@ -709,20 +711,25 @@ class RAN {
 		
 	}
 	
-	sinc( T, N, M ) {
+	sinc( N, M ) {
 		var 
-			sin = Math.sin,
+			T = 1,
 			Tc = T/M,
-			dt = T/2/N,
-			a = Math.PI * dt / Tc;
+			dt = T/N/2,
+			area = 0,
+			dx =  PI * dt / Tc; 
+		
+		//for (var n= -N, x = n*dx; n<N; n++, x += dx) area += (x ? abs(sin(x)/x) : 1)*dx;
+		//Log(N,M,dx,area);
 		
 		return $$( N, N, (m,n,A) => {
 			if ( m == n ) 
 				A[m][n] = 1;
 			else
 			if ( n > m ) {
-				var x = a * (n-m);
+				var x = dx * (n-m);
 				A[m][n] = sin( x ) / x;
+				//A[m][n] /= area;
 				//Log(m,n-m,x,A[m][n]);
 			}
 			else
@@ -730,20 +737,40 @@ class RAN {
 		});
 	}
 		
-	KL( A, cb) {
-		var ctx = {
-			//A: ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) //ME.matrix(A)
-			A: ME.matrix(A)
-		};
+	model( cb) {
 		
-		ME.eval("R=evd(A); ", ctx);
+		var ran = this, N = this.Mmax;
 		
-		//Log("lambda", ctx.R.values._data);
-		//var N = A.length;
-		//Log("e", ctx.e._data);  e=R.vectors'*R.vectors; 
-		//Log("x", ctx.x._data[N-1]);  x=R.vectors*diag(R.values); 
-		//Log("y", ctx.y._data[N-1]);	 y = A*R.vectors; 
-		cb( ctx.R );
+		ran.models.forEach( function (model) {
+			
+			for (var M=1; M<N; M+=5) {
+				var ctx = {
+					A: 
+						//ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) 
+						ME.matrix( ran[model]( N, M ) )
+				};
+
+				ME.eval( "R=evd(A); ", ctx);
+
+				var R = ctx.R;
+				
+				if (false) {
+					//Log("lambda", R.values._data);
+					ME.eval( "e=R.vectors'*R.vectors; x=R.vectors*diag(R.values); y = A*R.vectors; ", ctx);
+					Log("e", ctx.e._data);  
+					Log("x", ctx.x._data[N-1]);  
+					Log("y", ctx.y._data[N-1]);	 
+				}
+
+				cb({
+					model: model,
+					M: M,
+					values: R.values._data,
+					vectors: R.vectors._data
+				});
+			}
+		});
+		
 	}
 		
 	statCorr ( ) {  // statistical correlation function
@@ -859,30 +886,59 @@ class RAN {
 			M = T / Tc,
 			delta = Kbar / M;
 
-		if (this.solve)
-			this.jumpStats( this.solve, function (stats) {
-				ran.record({
-					at:"end", t:ran.t, s:ran.s,
-					
-					supervised: solve.batch
-						? {
-							//jump_rates: ran.Amle, 
-							//stat_corr: $sample(ran.gamma,solve.batch || 1),
-							mle_holding_times: ran.Rmle,
-							rel_trans_prob_error: ran.Perr,
-							mle_trans_prob: ran.mleP,
-							trans_counts: ran.N1,
-							mean_count: Kbar, 
-							coherence_time: Tc, 
-							coherence_intervals: M,
-							mean_rate: lambda, 
-							degeneracy_param: delta,
-							snr: sqrt( Kbar / (1 + delta ) )
-						}
-						: { },
-					
-					unsupervised: stats
-				});
+		function record() {
+			ran.record({
+				at:"end", t:ran.t, s:ran.s,
+
+				supervised: solve.batch
+					? {
+						//jump_rates: ran.Amle, 
+						//stat_corr: $sample(ran.gamma,solve.batch || 1),
+						mle_holding_times: ran.Rmle,
+						rel_trans_prob_error: ran.Perr,
+						mle_trans_prob: ran.mleP,
+						trans_counts: ran.N1,
+						mean_count: Kbar, 
+						coherence_time: Tc, 
+						coherence_intervals: M,
+						mean_rate: lambda, 
+						degeneracy_param: delta,
+						snr: sqrt( Kbar / (1 + delta ) )
+					}
+					: { },
+
+				unsupervised: stats
+			});
+		}
+	
+		if (ran.solve)
+			ran.jumpStats( ran.solve, function (stats) {
+				
+				if (ran.getPCs)
+					ran.getPCs( stats.coherence_intervals, function (pcs) {
+						var 
+							evals = pcs.eigen_values,
+							evecs = pcs.eigen_vectors,
+							N = egvals.length,
+							ctx = {
+								B: ME.matrix( $(N, (n,B) => {
+									b = sqrt( expdev( evals[n] ) );
+									arg = rand() * PI;
+									B[n] = ME.complex( b * cos(arg), b * sin(arg) );
+								}) ),
+
+								V: ME.matrix( evecs )
+							};
+
+						ME.eval( "A=V*B; lambda = A.*conj(A);" , ctx);
+
+						Log("lam est=", ctx.lambda._data);
+						stats.unsupervised.intensity = ctx.lambda._data;
+						record();
+					});
+				
+				else
+					record();
 			});
 		
 		else
@@ -1002,7 +1058,7 @@ RAN.MLE = JSLIB.MLE;
 module.exports = RAN;
 
 function expdev(mean) {
-	return -mean * Math.log(Math.random());
+	return -mean * log(rand());
 }
 
 function avgRate(A) {  // computes average jump rate in A not necessarily balanced
@@ -1115,11 +1171,11 @@ function $sum(A,cb) {
 	return sum;
 }
 
-function $avg(A,cb) {
-	return $sum(A,cb) / A.length;
+function $avg(A) {
+	return $sum(A) / A.length;
 }
 
-function max(A, cb) {
+function $max(A) {
 	var Amax = -1e99, Aidx = 0;
 	$use(A, function (k) {
 		if ( A[k] > Amax ) {
@@ -1127,7 +1183,6 @@ function max(A, cb) {
 			Aidx = k;
 		}
 	});
-	if (cb) cb( Amax, Aidx );
 	return Amax;
 }
 
@@ -1297,10 +1352,6 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 		logP[n] = logA - logB;
 	});
 }	
-
-function extStats( Tc, model, cb) {
-	cb({});
-}
 
 function eventStats(H, T, N, solve, cb) {
 /*
