@@ -165,7 +165,7 @@ class RAN {
 		else
 		if ( obs ) {
 			var	
-				dims = obs.dims,
+				dims = obs.dims || [2,2],
 				states = 1,
 				drop = $use(dims, (n,D) => states *= D[n] ),
 				K = this.K = states,
@@ -517,6 +517,10 @@ class RAN {
 		if (cb) cb(this);
 	}
 	
+	getPCs(model, min, M, cb) {
+		cb(null);
+	}
+		
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
 		function Gillespie( fr, P, R ) {  // compute cumulative trans probs P given holding times R
@@ -878,15 +882,14 @@ class RAN {
 	onEnd() {
 		var 
 			ran = this,
-			solve = this.solve || {},
+			solve = this.solve,
 			T = this.t,
 			Tc = this.Tc,
 			Kbar = $avg(this.J),
-			lambda = Kbar / T,
 			M = T / Tc,
 			delta = Kbar / M;
 
-		function record() {
+		function record(stats) {
 			ran.record({
 				at:"end", t:ran.t, s:ran.s,
 
@@ -901,7 +904,7 @@ class RAN {
 						mean_count: Kbar, 
 						coherence_time: Tc, 
 						coherence_intervals: M,
-						mean_rate: lambda, 
+						mean_intensity: Kbar / T,
 						degeneracy_param: delta,
 						snr: sqrt( Kbar / (1 + delta ) )
 					}
@@ -910,35 +913,44 @@ class RAN {
 				unsupervised: stats
 			});
 		}
-	
-		if (ran.solve)
-			ran.jumpStats( ran.solve, function (stats) {
+		
+		if (solve)
+			ran.jumpStats( solve, function (stats) {
 				
-				if (ran.getPCs)
-					ran.getPCs( stats.coherence_intervals, function (pcs) {
-						var 
-							evals = pcs.eigen_values,
-							evecs = pcs.eigen_vectors,
-							N = egvals.length,
-							ctx = {
-								B: ME.matrix( $(N, (n,B) => {
-									b = sqrt( expdev( evals[n] ) );
-									arg = rand() * PI;
-									B[n] = ME.complex( b * cos(arg), b * sin(arg) );
-								}) ),
+				if (pc = solve.pc)
+					ran.getPCs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, function (pcs) {
+						if (pcs) {
+							var 
+								evals = pcs.eigen_values,
+								evecs = pcs.eigen_vectors,
+								Wbar = $sum(evals),
+								N = evals.length,
+								ctx = {
+									B: ME.matrix( $(N, (n,B) => {
+										var
+											b = sqrt( expdev( evals[n] ) ),
+											arg = rand() * PI;
 
-								V: ME.matrix( evecs )
-							};
+										B[n] = ME.complex( b * cos(arg), b * sin(arg) );
+									}) ),
 
-						ME.eval( "A=V*B; lambda = A.*conj(A);" , ctx);
+									V: ME.matrix( evecs )
+								};
 
-						Log("lam est=", ctx.lambda._data);
-						stats.unsupervised.intensity = ctx.lambda._data;
-						record();
+							ME.eval( "A=V*B; lambda = A.*conj(A);" , ctx);
+
+							Log("lam est=", ctx.lambda._data);
+							stats.unsupervised.intensity = ctx.lambda._data;
+							stats.unsupervised.mean_count = Wbar;
+							stats.unsupervised.mean_intensity = Wbar / T;
+						}
+
+						record(stats);
 					});
-				
+
 				else
-					record();
+					record(stats);
+				
 			});
 		
 		else
@@ -1653,21 +1665,24 @@ returns M = number of coherence intervals, SNR, etc given
 			G[k] = exp( logGamma[k] );
 		}),
 		*/
-		Kmax = H.length,
-		Kbar = 0,
-		K = [],  // complessed count list
-		kCompression = "compress" in solve ? solve.compress : true,
-		pInterpolation = "interpolate" in solve ? solve.interpolate : false,
-		Mdebug = 0, //75,
+		Kmax = H.length,  // max count
+		Kbar = 0,  // mean count
+		K = [],  // count list
+		//compress = "compress" in solve ? solve.compress : true,
+		//interpolate = "interpolate" in solve ? solve.interpolate : false,
+		compress = solve.lfa ? false : true,
+		interpolate = !compress,
 		fK = $(Kmax, function (k, p) {    // count frequencies
-			if (pInterpolation)  {
+			if (interpolate)  {
 				if ( H[k] ) 
 					p[k] = H[k] / N;
+				
 				else
 				if ( k ) {
 					N += H[k-1];
 					p[k] = H[k-1] / N;
 				}
+				
 				else
 					p[k] = 0;
 			}
@@ -1680,7 +1695,7 @@ returns M = number of coherence intervals, SNR, etc given
 	});
 
 	$use(fK, function (k) {   
-		if ( kCompression ) {
+		if ( compress ) {
 			if ( fK[k] ) K.push( k );
 		}
 		else
@@ -1690,7 +1705,7 @@ returns M = number of coherence intervals, SNR, etc given
 	var
 		M = 0,
 		logfK = $(K.length, function (n,logf) {  // observed log count frequencies
-			if ( Mdebug ) { // enables debugging
+			if ( Mdebug = 0 ) { // enables debugging
 				logf[n] = logNB(K[n], Kbar, Mdebug);
 				//logf[n] += (n%2) ? 0.5 : -0.5;  // add some "noise"
 			}
@@ -1698,7 +1713,7 @@ returns M = number of coherence intervals, SNR, etc given
 				logf[n] = fK[ K[n] ] ? log( fK[ K[n] ] ) : -7;
 		});
 
-	Log("Kbar=", Kbar, T, N, Kmax, "->", K.length, kCompression, pInterpolation);
+	Log("Kbar=", Kbar, T, N, Kmax, "->", K.length, compress, interpolate);
 
 	if (false)
 		$use(K, function (n) {
@@ -1713,7 +1728,7 @@ returns M = number of coherence intervals, SNR, etc given
 		M.lma = M.fits.parameterValues[0];
 	}
 	
-	if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  and with compression off, interpolation on
+	if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  (compression off, interpolation on)
 		M.lfa = LFA( solve.lfa, fK, logNB);
 	}
 	
@@ -1721,13 +1736,13 @@ returns M = number of coherence intervals, SNR, etc given
 		M.bfs = BFS( solve.bfs, fK, logNB);
 	}
 
-	var M0 = M[solve.use || "lfa"];
+	var M0 = M[solve.use || "lma"];
 	
 	cb({
 		fits: {solver: solve.use, solution: M},		
 		coherence_intervals: M0,
 		mean_count: Kbar,
-		mean_rate: Kbar / T,
+		est_rate: Kbar / T,
 		degeneracy_param: Kbar / M0,
 		snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
 		coherence_time: T / M0,
