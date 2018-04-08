@@ -1,9 +1,8 @@
 '$use strict';
 /*
-TODO
-Add method to compute the N-state tx Probs (the NxN [scriptP] matrix) from the autocorrelation model
-given its Tc parameter.  Will use the SVD approach to get a NxN [U] and [V] matries, either of 
-which can be used for [scriptP].    This [scriptP]^{some large power} * [p]  --> [equlib p] and therefore
+To Do
++ Add VA/EM methods to compute the N-state trans probs.
++ May want to add a SVD method to recover the [scriptP] trans probs .   This [scriptP]^{some large power} * [p]  --> [equlib p] and therefore
 the [lambda] = [eqlib p] * N. And/or KL the gamma corelation model for the eignvalues, the some of
 which is the integrated intensity.
 */
@@ -124,16 +123,16 @@ class RAN {
 			samples: 0 // number of ensemble members sampled
 		}, this);
 
-		if (opts) Copy(opts, this);
+		if (opts) Copy(opts, this, ".");
 		
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			trP = this.trP, // || {},  // K-state spec
+			trP = this.trP, // transition probs KxK or coersed to KxK
 			K = this.K, // K-state spec
-			obs = this.obs,
-			nyquist = this.nyquist,
-			dt = this.dt = 1/nyquist,			
+			obs = this.obs, // observation (aka emission) parms
+			nyquist = this.nyquist,	// upsampling rate
+			dt = this.dt = 1/nyquist,	// step time
 			symbols = this.symbols;  // state symbols
 
 		if ( this.p ) {   // two-state process via p,Tc
@@ -514,7 +513,7 @@ class RAN {
 			this.gamma[0] = 1;
 		}
 		
-		if (cb) cb(this);
+		if (cb) cb(null);
 	}
 	
 	getPCs(model, min, M, cb) {
@@ -1834,19 +1833,6 @@ switch (0) {
 		
 	case 3:  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
 		var ran = new RAN({
-			//wiener: 0,
-
-			//legacy A configs
-			//A: [[0,1,0,4],[1,0,4,4],[0,1,0,0],[1,0,0,0]],
-			//symbols: [-2,-1,1,2],
-
-			//A: [[0,1,2],[3,0,4],[5,6,0]],
-			//symbols: [-1,0,1],
-
-			//A: {dt: 0.04599999999999999, n: 2},  // Nq=20
-			//A: {dt: 0.09199999999999998, n: 2},  // Nq=10
-			//A: [[0,2], [1,0]], 
-
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> pi[k] = 1/K  eqpr)
 			//trP: [[.6, .4],[.4, .6]],
 			//trP: [[0.83177, 0.16822], [0.17152, 0.82848]],
@@ -1877,13 +1863,6 @@ switch (0) {
 			//symbols: [-1,0,1],
 			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 			
-			/* experimental emmision parms
-			K: 4,
-			obs: {
-				weights: [1,1],
-				parts: [0.5,0.5],
-			},  */
-
 			solve:  {
 				batch: 50,  // supervised learning
 				compress: true,
@@ -1915,9 +1894,7 @@ switch (0) {
 			N: 1000,
 			nyquist: 1,
 			steps: 200
-		}, 
-
-		function (ran) {
+		}, function (ran) {
 			ran.pipe( function (store) {
 				Log(store);
 			});
@@ -1941,9 +1918,7 @@ switch (0) {
 			N: 1000,
 			nyquist: 1,
 			steps: 200
-		}, 
-
-		function (ran) {
+		}, function (ran) {
 			ran.pipe(process.stdout);
 		});
 		break;		
@@ -1991,9 +1966,7 @@ switch (0) {
 			N: 50,  // assume 50 elements in process
 			//nyquist: 1
 			//steps: 200
-		}, 
-
-		function (ran) {
+		}, function (ran) {
 			ran.pipe( function (store) {
 				Log(store);
 			});
