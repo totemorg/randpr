@@ -123,7 +123,7 @@ class RAN {
 			samples: 0 // number of ensemble members sampled
 		}, this);
 
-		if (opts) Copy(opts, this, ".");
+		if (opts) Copy(opts, this);
 		
 		var 
 			ran = this,
@@ -877,17 +877,21 @@ class RAN {
 	onEnd() {
 		var 
 			ran = this,
-			solve = this.solve,
-			T = this.t,
-			Tc = this.Tc,
-			Kbar = $avg(this.J),
-			M = T / Tc,
-			delta = Kbar / M;
+			solve = this.solve;
 
-		function record(stats) {
+		function record(ran, stats) {
+			var
+				T = ran.t,
+				Tc = ran.Tc,
+				solve = ran.solve,
+				Kbar = $avg(ran.J),
+				M = T / Tc,
+				delta = Kbar / M;
+			
+			//Log("rec ",stats);
 			ran.record({
 				at:"end", t:ran.t, s:ran.s,
-
+				
 				supervised: solve.batch
 					? {
 						//jump_rates: ran.Amle, 
@@ -904,23 +908,24 @@ class RAN {
 						snr: sqrt( Kbar / (1 + delta ) )
 					}
 					: { },
-
-				unsupervised: stats
+					
+				unsupervised: stats 
 			});
 		}
-		
+				
 		if (solve)
 			ran.jumpStats( solve, function (stats) {
 
-				var pc = solve.pc;
+				var pc = solve.pc;				
 				
 				if (pc)
-					ran.getPCs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, function (pcs) {
+					ran.getPCs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran, function (ran, pcs) {
 						if (pcs) {
 							var 
-								evals = pcs.eigen_values,
-								evecs = pcs.eigen_vectors,
+								evals = pcs.values,
+								evecs = pcs.vectors,
 								Wbar = $sum(evals),
+								T = ran.t,
 								N = evals.length,
 								ctx = {
 									B: ME.matrix( $(N, (n,B) => {
@@ -934,26 +939,27 @@ class RAN {
 									V: ME.matrix( evecs )
 								};
 
-							ME.eval( "A=V*B; lambda = A.*conj(A);" , ctx);
+							ME.eval( "A=B*V; lambda = abs(A);" , ctx);
 
-							Log("lam est=", ctx.lambda._data);
-							stats.unsupervised.intensity = ctx.lambda._data;
-							stats.unsupervised.mean_count = Wbar;
-							stats.unsupervised.mean_intensity = Wbar / T;
+							//Log("lam est=", ctx.lambda._data);
+							record(ran, Copy( stats, {
+								intensity: ctx.lambda._data,
+								mean_count: Wbar,
+								mean_intensity: Wbar / T
+							}));
 						}
 
-						record(stats);
+						else
+							record(ran, null);
 					});
 
 				else
-					record(stats);
+					record(ran, null);
 				
 			});
 		
 		else
-			ran.record({
-				at:"end", t:ran.t, s:ran.s
-			});
+			ran.record(rec);
 
 	}
 
@@ -1371,14 +1377,13 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 	});
 }	
 
-function eventStats(H, T, N, solve, cb) {
+function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence intervals M, SNR, etc
 /*
-computes M = number of coherence intervals, SNR, etc given
 	H[k] = observation freqs at count level k
 	T = observation time
 	N = number of observations
-	solve = {lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
-	callback cb(computed stats)
+	solve = {use: "lma" | ...,  lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
+	callback cb(unsupervised estimates)
 */
 	function logNB(k,a,x) { // negative binomial objective function
 	/*
@@ -1710,7 +1715,7 @@ computes M = number of coherence intervals, SNR, etc given
 		logfK = $(K.length, function (n,logf) {  // observed log count frequencies
 			if ( Mdebug = 0 ) { // enables debugging
 				logf[n] = logNB(K[n], Kbar, Mdebug);
-				//logf[n] += (n%2) ? 0.5 : -0.5;  // add some "noise"
+				//logf[n] += (n%2) ? 0.5 : -0.5;  // add some "noise" for debugging
 			}
 			else
 				logf[n] = fK[ K[n] ] ? log( fK[ K[n] ] ) : -7;
