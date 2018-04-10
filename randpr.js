@@ -50,13 +50,13 @@ class RAN {
 	constructor(opts, cb) {
 		Copy({  // default configuration
 
-			N: 0, 		// ensemble size
+			N: 1, 		// ensemble size
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
 			symbols: null, 	// [K] state symbols (default = 0:K-1)
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
 			nyquist: 1, // nyquist oversampling rate = 1/dt
-			steps: 0, // number of process steps of size dt
+			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
 						
@@ -248,10 +248,10 @@ class RAN {
 
 			case Array:
 				var
-					N = trP.length, 
-					M = trP[0].length,
-					K = this.K = K || N,
-					P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<N && to<M) ? trP[fr][to] : 0 );
+					Kfr = trP.length, 
+					Kto = trP[0].length,
+					K = this.K = K || Kfr,
+					P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
 
 				trP = this.trP = P;
 				break;
@@ -339,17 +339,17 @@ class RAN {
 		else
 		*/
 		
-		var 
-			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-			ab = this.ab = firstAbsorbTimes(trP),
-			/*
-			A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
-				A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
-			}) ), */
-			pi = this.pi = $(K, (k,pi) =>  // eq state probs
-				pi[k] = 1/R[k][k]
-			);
-
+		if ( !this.learn) {
+			var 
+				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
+				ab = this.ab = firstAbsorbTimes(trP),
+				/*
+				A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
+					A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
+				}) ), */
+				pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k]	);  // eq state probs
+		}
+		
 		/*
 		else
 		if ( p )  {
@@ -407,7 +407,7 @@ class RAN {
 				dt = this.dt = 1/fs;  // sample time
 		}  */
 		
-		Log(K, trP, R, ab, pi);
+		//Log(K, trP, R, ab, pi, N);
 		
 		if ( !symbols ) {  // default state symbols
 			var symbols = this.symbols = $(K);
@@ -435,7 +435,7 @@ class RAN {
 			//lambda = this.lambda = avgRate(this.A),
 			//Tc = this.Tc = 1/lambda,	
 			U1 = this.U1 = $(N),
-			J = this.J = $(N, (i,A) => A[i] = 0),
+			J = this.J = $(N, $zero),
 			Y = this.Y = $(N),
 			N1 = this.N1 = $$(K,K,$$zero),	
 			mleP = this.mleP = $$(K,K,$$zero), 
@@ -503,10 +503,8 @@ class RAN {
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
-		if ( this.steps ) {    // reserve statistical autocovariance
-			this.gamma = $(this.steps, (n,A) => A[n] =0 );
-			this.gamma[0] = 1;
-		}
+		this.gamma = $(this.steps, $zero);
+		this.gamma[0] = 1;
 		
 		if (cb) cb(null);
 	}
@@ -566,7 +564,7 @@ class RAN {
 	jumpStats(solve, cb) {
 		var 
 			J = this.J,  // number of  state jumps (aka events) made by each member in the ensemble
-			jumps = this.jumps = $( $max(J)+1, (n,A) => A[n] =0 );
+			jumps = this.jumps = $( $max(J)+1, $zero );
 			
 		$use(J, function (n) {  // count frequencies across the ensemble
 			jumps[ J[n] ]++;
@@ -583,7 +581,7 @@ class RAN {
 			Y=this.Y, obs=this.obs,J=this.J,
 			t = this.t, s = this.s, N = this.N;
 		
-		Log(s,ran.gamma);
+		//Log(s,ran.gamma);
 		
 		ran.gamma[s] = ran.statCorr();
 
@@ -795,7 +793,7 @@ class RAN {
 		for (var s=0, S = this.s, Tc = 0; s<S; s++) Tc += abs(this.gamma[s]) * (1 - s/S);
 		
 		this.Tc = Tc * this.dt / this.gamma[0];
-		Log("tc calc", Tc, this.gamma);
+		Log("Tc=", Tc);
 	}
 	
 	record (ev) {  // record event ev to store or stream
@@ -844,6 +842,7 @@ class RAN {
 		$$use(Rmle, function (fr,to) {
 			Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
 		}); */
+		
 		this.record({
 			at:"batch",t: this.t-this.dt, s: this.s-1,
 			rel_trans_prob_error: Perr,
@@ -1374,14 +1373,13 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 
 function eventStats(H, T, N, solve, cb) {
 /*
-returns M = number of coherence intervals, SNR, etc given
+computes M = number of coherence intervals, SNR, etc given
 	H[k] = observation freqs at count level k
 	T = observation time
 	N = number of observations
 	solve = {lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
 	callback cb(computed stats)
 */
-	
 	function logNB(k,a,x) { // negative binomial objective function
 	/*
 	return log{ p0 } where
@@ -1675,8 +1673,6 @@ returns M = number of coherence intervals, SNR, etc given
 		Kmax = H.length,  // max count
 		Kbar = 0,  // mean count
 		K = [],  // count list
-		//compress = "compress" in solve ? solve.compress : true,
-		//interpolate = "interpolate" in solve ? solve.interpolate : false,
 		compress = solve.lfa ? false : true,
 		interpolate = !compress,
 		fK = $(Kmax, function (k, p) {    // count frequencies
@@ -1789,7 +1785,7 @@ function _logp0(a,k,x) {  // for case 6.x testing
 	return logp0;
 }
 
-switch (2.4) {
+switch (0) {
 	case 1:  // mean recurrence times
 		Log( meanRecurTimes(  
 			// [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
@@ -1906,12 +1902,13 @@ switch (2.4) {
 		});
 		break;
 		
-	case 3.1:  // async pipes
+	case 3.1:  // async pipes - unsupervised and supervised learning 
 		var ran = new RAN({
 
 			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 			
 			solve:  {
+				use: "lma",
 				batch: 50,
 				lma: [50]
 				// bfs: [5,200,5]
@@ -1920,12 +1917,15 @@ switch (2.4) {
 			
 			N: 1000,
 			nyquist: 1,
-			steps: 200
+			steps: 800
 		});
 		ran.pipe(process.stdout);
+		//>  Kbar= 36.38199999999999 200 1000 62 -> 42 true false
+		//> Tc= 9.136382539233452
+		
 		break;		
 		
-	case 3.2:  // unsupervised and supervised learning mode
+	case 3.2:  // unsupervised learning 
 		var ran = new RAN({
 
 			learn: function (cb) {
@@ -1962,27 +1962,27 @@ switch (2.4) {
 				}
 			},
 
-			trP: $$(2,2),  // assume 2-state process
-			//K: 2,  // assume 2-state process
-			N: 50,  // assume 50 members in ensemble
-			//nyquist: 1
-			//steps: 200
+			trP: {},  
+			K: 2,  // assume 2-state process
+			N: 50  // assume 50 members in ensemble
 		});
 		ran.pipe( function (store) {
 			Log(store);
 		});
+		//> Tc= 59.72163221058061
+		//> Kbar= 9.06 500 50 18 -> 13 true false		
 		break;	
 				
+	case 4.1:  // observation permutations
+		Log(perms([],[2,6,4],[]));
+		break;
+					
 	case 4.2:  // observation permutations
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
 		}));
 		break;
 		
-	case 4.1:  // observation permutations
-		Log(perms([],[2,6,4],[]));
-		break;
-					
 	case 6.1:  // LMA/LFA convergence
 		
 		function sinFunction([a, b]) {
