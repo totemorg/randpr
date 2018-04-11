@@ -208,54 +208,60 @@ class RAN {
 			K = this.K = trP.length || 2;
 		*/
 		
-		switch ( trP.constructor ) {
-			case Object: 
-				var
-					P = $$(K, K, $$zero),
-					dims = obs ? obs.dims : [K];
+		Log(trP.constructor, trP.constructor == Object);
+		if (trP)
+			switch ( trP.constructor ) {
+				case Object: 
+					var
+						P = $$(K, K, $$zero),
+						dims = obs ? obs.dims : [K];
 
-				for (var frKey in trP) {
-					var 
-						frP = trP[frKey],
-						frIndex = index( frKey.split(","), dims );
+					for (var frKey in trP) {
+						var 
+							frP = trP[frKey],
+							frIndex = index( frKey.split(","), dims );
 
-					//Log("fr", frKey, frIndex);
+						//Log("fr", frKey, frIndex);
 
-					for (var toKey in frP) {
-						var toIndex = index( toKey.split(","), dims );
-						P[frIndex][toIndex] = frP[toKey];
+						for (var toKey in frP) {
+							var toIndex = index( toKey.split(","), dims );
+							P[frIndex][toIndex] = frP[toKey];
+						}
 					}
-				}
 
-				balanceProbs(P);
-				trP = this.trP = P;
-				break;
+					balanceProbs(P);
+					trP = this.trP = P;
+					Log("trp=", trP);
+					break;
 
-			case String:
-				switch (trP) {
-					case "random":
-						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
-						$use(trP, function (fr) {
-							var 
-								P = trP[fr],
-								sum = $sum( P );
+				case String:
+					switch (trP) {
+						case "random":
+							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
+							$use(trP, function (fr) {
+								var 
+									P = trP[fr],
+									sum = $sum( P );
 
-							$use(P, (to,P) => P[to] /= sum);
-						});
-						break;
-				}
-				break;
+								$use(P, (to,P) => P[to] /= sum);
+							});
+							break;
+					}
+					break;
 
-			case Array:
-				var
-					Kfr = trP.length, 
-					Kto = trP[0].length,
-					K = this.K = K || Kfr,
-					P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
+				case Array:
+					var
+						Kfr = trP.length, 
+						Kto = trP[0].length,
+						K = this.K = K || Kfr,
+						P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
 
-				trP = this.trP = P;
-				break;
-		}
+					trP = this.trP = P;
+					break;
+			}
+		
+		else
+			return;
 		
 		/*
 		var
@@ -290,8 +296,7 @@ class RAN {
 
 			Log(k,mu,sigma);
 			gens[k] = RAN.MVN( mu, sigma );
-		});
-	*/
+		}); */
 		
 		/*
 		var   // to be revised with dirchlict allocation
@@ -395,7 +400,7 @@ class RAN {
 					}),
 				ab = this.ab = firstAbsorbTimes(trP);			
 		}*/
-		
+
 		/*
 		else { // K-state process from jump rates and nyquist
 			var
@@ -407,7 +412,7 @@ class RAN {
 				dt = this.dt = 1/fs;  // sample time
 		}  */
 		
-		//Log(K, trP, R, ab, pi, N);
+		Log(K, trP, N);
 		
 		if ( !symbols ) {  // default state symbols
 			var symbols = this.symbols = $(K);
@@ -509,8 +514,8 @@ class RAN {
 		if (cb) cb(null);
 	}
 	
-	getPCs(model, min, M, win, cb) {
-		cb(null);
+	getpcs(model, min, M, win, ctx, cb) {
+		cb(ctx, null);
 	}
 		
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
@@ -582,6 +587,8 @@ class RAN {
 			t = this.t, s = this.s, N = this.N;
 		
 		//Log(s,ran.gamma);
+		
+		//Log("K=",K, "trP=", this.trP);
 		
 		ran.gamma[s] = ran.statCorr();
 
@@ -735,7 +742,7 @@ class RAN {
 		});
 	}
 		
-	model( cb) {
+	config( cb) {
 		
 		var ran = this, N = this.Mmax, dM = this.Mstep;
 		
@@ -752,7 +759,7 @@ class RAN {
 
 				var R = ctx.R;
 				
-				if (false) {
+				if (false) {  // debugging
 					//Log("lambda", R.values._data);
 					ME.eval( "e=R.vectors'*R.vectors; x=R.vectors*diag(R.values); y = A*R.vectors; ", ctx);
 					Log("e", ctx.e._data);  
@@ -762,7 +769,7 @@ class RAN {
 
 				cb({
 					model: model,
-					M: M,
+					intervals: M,
 					values: R.values._data,
 					vectors: R.vectors._data
 				});
@@ -877,21 +884,15 @@ class RAN {
 	onEnd() {
 		var 
 			ran = this,
-			solve = this.solve;
-
-		function record(ran, stats) {
-			var
-				T = ran.t,
-				Tc = ran.Tc,
-				solve = ran.solve,
-				Kbar = $avg(ran.J),
-				M = T / Tc,
-				delta = Kbar / M;
-			
-			//Log("rec ",stats);
-			ran.record({
+			solve = ran.solve,
+			T = ran.t,
+			Tc = ran.Tc,
+			Kbar = $avg(ran.J),
+			M = T / Tc,
+			delta = Kbar / M,
+			rec = {
 				at:"end", t:ran.t, s:ran.s,
-				
+
 				supervised: solve.batch
 					? {
 						//jump_rates: ran.Amle, 
@@ -907,19 +908,16 @@ class RAN {
 						degeneracy_param: delta,
 						snr: sqrt( Kbar / (1 + delta ) )
 					}
-					: { },
-					
-				unsupervised: stats 
-			});
-		}
-				
+					: { }
+			};
+
 		if (solve)
 			ran.jumpStats( solve, function (stats) {
 
 				var pc = solve.pc;				
 				
 				if (pc)
-					ran.getPCs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran, function (ran, pcs) {
+					ran.getpcs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, rec, function (rec, pcs) {
 						if (pcs) {
 							var 
 								evals = pcs.values,
@@ -942,19 +940,19 @@ class RAN {
 							ME.eval( "A=B*V; lambda = abs(A);" , ctx);
 
 							//Log("lam est=", ctx.lambda._data);
-							record(ran, Copy( stats, {
+							ran.record( Copy( Copy( stats, {
 								intensity: ctx.lambda._data,
 								mean_count: Wbar,
 								mean_intensity: Wbar / T
-							}));
+							}), rec) );
 						}
 
 						else
-							record(ran, null);
+							ran.record(rec);
 					});
 
 				else
-					record(ran, null);
+					ran.record(rec);
 				
 			});
 		
@@ -964,18 +962,23 @@ class RAN {
 	}
 
 	onConfig() {
-		var obs = this.obs;
+		var
+			obs = this.obs,		
+			trP = this.trP,
+			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
+			pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k] ),   // eq state probs
+			ab = this.ab = firstAbsorbTimes(trP);			
 		
 		this.record({
 			at: "config", t: this.t, s: this.s,
 			states: this.K,
 			ensemble_size: this.N,		
 			sample_time: this.dt,
-			jump_rates: this.A,
+			//jump_rates: this.A,
 			cummulative_trans_prob: this.cumP,
-			trans_prob: this.trP,
-			hold_times: this.R,
-			equlib_prob: this.pi,
+			trans_prob: trP,
+			recurrence_times: R,
+			equlib_prob: pi,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
 			mixing: obs 
@@ -987,7 +990,7 @@ class RAN {
 			//avg_jump_rate: this.lambda,
 			//exp_coherence_time: this.Tc,
 			run_steps: this.steps,
-			absorb_stats: this.ab
+			absorb_times: ab
 		});
 	}
 	
@@ -1030,7 +1033,7 @@ class RAN {
 				}
 			});
 		
-		ran.onConfig();		// configure the process
+		ran.onConfig();		// process configured
 		
 		if  (sync) {  // pipe is sync mode using array store
 			ran.start();
