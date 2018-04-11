@@ -99,11 +99,13 @@ class RAN {
 			A: null,	// [KxK] jump rates
 			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
-			// learning parms
+			// supervised learning parms			
+			batch: 0, 				// batch size in steps before next estimate
+			
+			// unsupervised learning parms			
 			solve: {   // count stats parms
 				use: "lma", 		// use lma solution for number of coherence intervals
-				batch: 0, 				// supervised learning batch size
-				lma: [50]			// unsupervised learning using levenberg-marquardt [initial]
+				lma: [50]			// using levenberg-marquardt [initial]
 				// bfs: [5,200,5]	// using brute force search [min,max,inc]
 				// lfa: [50]			// using linear feactor analysis [initial]
 			}, 
@@ -129,7 +131,6 @@ class RAN {
 			ran = this,
 			N = this.N, // ensemble size
 			trP = this.trP, // transition probs KxK or coersed to KxK
-			K = this.K, // K-state spec
 			obs = this.obs, // observation (aka emission) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
@@ -143,9 +144,9 @@ class RAN {
 				rate = 2*meanrate,
 				alpha = p * rate,
 				beta = rate - alpha,
-				q = beta / rate;
+				q = beta / rate,
+				K = this.K = 2;
 			
-			K = this.K = 2;
 			trP = this.trP = [[1-p, p], [q, 1-q]];
 		}
 
@@ -155,9 +156,9 @@ class RAN {
 				alpha = this.alpha,
 				beta = this.beta, 
 				p = alpha / (alpha + beta), 
-				q = beta / (alpha + beta);
+				q = beta / (alpha + beta),
+				K = this.K = 2;
 			
-			K = this.K = 2;
 			trP = this.trP = [[1-p, p], [q, 1-q]];
 		}
 
@@ -208,11 +209,37 @@ class RAN {
 			K = this.K = trP.length || 2;
 		*/
 		
-		Log(trP.constructor, trP.constructor == Object);
+		//Log(trP);
 		if (trP)
-			switch ( trP.constructor ) {
-				case Object: 
+			switch ( trP.constructor.name ) {
+				case "String":
+					var K = this.K;
+					switch (trP) {
+						case "random":
+							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
+							$use(trP, function (fr) {
+								var 
+									P = trP[fr],
+									sum = $sum( P );
+
+								$use(P, (to,P) => P[to] /= sum);
+							});
+							break;
+					}
+					break;
+
+				case "Array":
 					var
+						K = this.K = trP.length;
+					
+					break;
+					//Kto = trP[0].length,
+					//P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
+					//trP = this.trP = P;
+					
+				case "Object":
+					var
+						K = this.K,
 						P = $$(K, K, $$zero),
 						dims = obs ? obs.dims : [K];
 
@@ -231,32 +258,7 @@ class RAN {
 
 					balanceProbs(P);
 					trP = this.trP = P;
-					Log("trp=", trP);
-					break;
-
-				case String:
-					switch (trP) {
-						case "random":
-							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
-							$use(trP, function (fr) {
-								var 
-									P = trP[fr],
-									sum = $sum( P );
-
-								$use(P, (to,P) => P[to] /= sum);
-							});
-							break;
-					}
-					break;
-
-				case Array:
-					var
-						Kfr = trP.length, 
-						Kto = trP[0].length,
-						K = this.K = K || Kfr,
-						P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
-
-					trP = this.trP = P;
+					//Log("trp=", trP);
 					break;
 			}
 		
@@ -561,21 +563,25 @@ class RAN {
 		}
 	}
 	
-	end() {  // terminate process
+	end(cb) {  // terminate process
+		var ran = this;
+		
 		this.corrTime();		
-		this.onEnd();
+		this.onEnd(cb); 
 	}
 	
 	jumpStats(solve, cb) {
 		var 
-			J = this.J,  // number of  state jumps (aka events) made by each member in the ensemble
-			jumps = this.jumps = $( $max(J)+1, $zero );
+			J = this.J,  // number of state jumps (aka events or counts) made by each ensemble member
+			T = this.t, // observation time
+			N = this.N, // number of count observations (aka ensemble size)
+			H = $( $max(J)+1, $zero );  // count frequencies
 			
 		$use(J, function (n) {  // count frequencies across the ensemble
-			jumps[ J[n] ]++;
+			H[ J[n] ]++;
 		});
 		
-		eventStats(jumps, this.t, this.N, solve, cb);	
+		eventStats(H, T, N, solve, cb);	
 	}
 		
 	step (evs) {  // advance process forward one step
@@ -678,12 +684,12 @@ class RAN {
 		var 
 			ran = this,
 			solve = this.solve || {},
-			batch = solve.batch || 0;
+			batch = this.batch;
 
 		if ( ran.learn ) { // learning mode
 			Log("start learn", ran.halt);
 			if (!ran.halt)
-				ran.learn( function (evs) {  // get events batch
+				ran.learn( function (evs, cb) {  // get events batch
 					
 					if (evs) {
 						Log("feeding",evs.length, evs[0].t);
@@ -693,7 +699,7 @@ class RAN {
 					else {
 						Log("halting");
 						ran.halt = true;
-						ran.end();
+						ran.end(cb);
 					}
 
 					if ( batch )
@@ -881,10 +887,17 @@ class RAN {
 		});
 	}
 
-	onEnd() {
+	onEnd(cb) {
+		
+		function done(rec) {
+			ran.record(rec);
+			if (cb) cb(ran.store);
+		}
+		
 		var 
 			ran = this,
 			solve = ran.solve,
+			batch = ran.batch,
 			T = ran.t,
 			Tc = ran.Tc,
 			Kbar = $avg(ran.J),
@@ -893,7 +906,7 @@ class RAN {
 			rec = {
 				at:"end", t:ran.t, s:ran.s,
 
-				supervised: solve.batch
+				supervised: batch
 					? {
 						//jump_rates: ran.Amle, 
 						//stat_corr: $sample(ran.gamma,solve.batch || 1),
@@ -908,56 +921,65 @@ class RAN {
 						degeneracy_param: delta,
 						snr: sqrt( Kbar / (1 + delta ) )
 					}
-					: { }
+					: { },
+				
+				unsupervised: {}
 			};
 
 		if (solve)
 			ran.jumpStats( solve, function (stats) {
 
-				var pc = solve.pc;				
+				if ( stats ) {
+					var pc = solve.pc;				
+
+					if (pc)
+						ran.getpcs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, rec, function (rec, pcs) {
+							if (pcs) {
+								var 
+									evals = pcs.values,
+									evecs = pcs.vectors,
+									Wbar = $sum(evals),
+									T = ran.t,
+									N = evals.length,
+									ctx = {
+										B: ME.matrix( $(N, (n,B) => {
+											var
+												b = sqrt( expdev( evals[n] ) ),
+												arg = rand() * PI;
+
+											B[n] = ME.complex( b * cos(arg), b * sin(arg) );
+										}) ),
+
+										V: ME.matrix( evecs )
+									};
+
+								ME.eval( "A=B*V; lambda = abs(A);" , ctx);
+
+								//Log("lam est=", ctx.lambda._data);
+								Copy( Copy( stats, {
+									intensity: ctx.lambda._data,
+									mean_count: Wbar,
+									mean_intensity: Wbar / T
+								}), rec.unsupervised );
+								
+								done(rec);
+							}
+
+							else
+								done(rec);
+						});
+
+					else
+						done(rec);
+				}
 				
-				if (pc)
-					ran.getpcs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, rec, function (rec, pcs) {
-						if (pcs) {
-							var 
-								evals = pcs.values,
-								evecs = pcs.vectors,
-								Wbar = $sum(evals),
-								T = ran.t,
-								N = evals.length,
-								ctx = {
-									B: ME.matrix( $(N, (n,B) => {
-										var
-											b = sqrt( expdev( evals[n] ) ),
-											arg = rand() * PI;
-
-										B[n] = ME.complex( b * cos(arg), b * sin(arg) );
-									}) ),
-
-									V: ME.matrix( evecs )
-								};
-
-							ME.eval( "A=B*V; lambda = abs(A);" , ctx);
-
-							//Log("lam est=", ctx.lambda._data);
-							ran.record( Copy( Copy( stats, {
-								intensity: ctx.lambda._data,
-								mean_count: Wbar,
-								mean_intensity: Wbar / T
-							}), rec) );
-						}
-
-						else
-							ran.record(rec);
-					});
-
 				else
-					ran.record(rec);
+					done(rec);
 				
 			});
 		
 		else
-			ran.record(rec);
+			done(rec);
 
 	}
 
@@ -965,6 +987,7 @@ class RAN {
 		var
 			obs = this.obs,		
 			trP = this.trP,
+			K = this.K,
 			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
 			pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k] ),   // eq state probs
 			ab = this.ab = firstAbsorbTimes(trP);			
@@ -1001,21 +1024,6 @@ class RAN {
 
 		Log("pipe sync", sync);
 		
-		/*
-		if (ran.learn)   // in learning mode 
-			ran.learn( function (evs) {  // get batch of events
-				if (evs) {  // process events
-					ran.step(evs);
-				}
-				
-				else {  // terminate and callback with store of batch estimates
-					ran.end();
-					cb(ran.store);
-				}
-			});
-		
-		else  // in generative mode
-		*/
 		ran.store = sync
 			? []
 			: new STREAM.Readable({  // prime and terminate the pipe
@@ -1243,7 +1251,8 @@ function firstAbsorbTimes(P) {  //< compute first absorption times
 			abP: ME.matrix([])
 		};
 	
-	if ( ctx.nAb>1 )
+	//Log("ab ctx", JSON.stringify(ctx));
+	if ( ctx.nAb && ctx.nTr )
 		ME.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", ctx);
 		
 	return {
@@ -1293,9 +1302,9 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 
 	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = det(A); ", ctx);
 	
-	//Log("det",ctx.Adet);
+	//Log("MRT det=",ctx.Adet);
 	
-	if ( ctx.Adet < 1e-3 && K>2 ) {
+	if ( ctx.Adet < 1e-3 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
 		return $$(K,K, $$zero );
 	}
@@ -1678,10 +1687,11 @@ function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence 
 			G[k] = exp( logGamma[k] );
 		}),
 		*/
+		Nevs = $sum(H), 	// number of events
 		Kmax = H.length,  // max count
 		Kbar = 0,  // mean count
 		K = [],  // count list
-		compress = solve.lfa ? false : true,
+		compress = solve.lfa ? false : true,   // enable pdf compression if not using lfa
 		interpolate = !compress,
 		fK = $(Kmax, function (k, p) {    // count frequencies
 			if (interpolate)  {
@@ -1724,7 +1734,14 @@ function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence 
 				logf[n] = fK[ K[n] ] ? log( fK[ K[n] ] ) : -7;
 		});
 
-	Log("Kbar=", Kbar, T, N, Kmax, "->", K.length, compress, interpolate);
+	Log({
+		Kbar: Kbar, 
+		T: T, 
+		N: N, 
+		Kmax: Kmax,
+		Nevs: Nevs,
+		ci: [compress, interpolate]
+	});
 
 	if (false)
 		$use(K, function (n) {
@@ -1732,33 +1749,39 @@ function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence 
 			Log(n, k, logNB(k,Kbar,55), logNB(k,Kbar,65), log( fK[k] ), logfK[n] );
 		});
 
-	var M = {};
-	
-	if ( solve.lma) {  // levenberg-marquadt algorithm for [M, ...]
-		M.fits = LMA( solve.lma, K, logfK, logNB);
-		M.lma = M.fits.parameterValues[0];
-	}
-	
-	if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  (compression off, interpolation on)
-		M.lfa = LFA( solve.lfa, fK, logNB);
-	}
-	
-	if (solve.bfs) { // brute force search for M
-		M.bfs = BFS( solve.bfs, fK, logNB);
-	}
+	if ( Kmax >= 2 ) {
+		var M = {};
 
-	var M0 = M[solve.use || "lma"];
+		if (solve.lma) {  // levenberg-marquadt algorithm for [M, ...]
+			M.fits = LMA( solve.lma, K, logfK, logNB);
+			M.lma = M.fits.parameterValues[0];
+		}
+
+		if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  (compression off, interpolation on)
+			M.lfa = LFA( solve.lfa, fK, logNB);
+		}
+
+		if (solve.bfs) { // brute force search for M
+			M.bfs = BFS( solve.bfs, fK, logNB);
+		}
+
+		var M0 = M[solve.use || "lma"];
+
+		cb({
+			events: Nevs,
+			fits: {solver: solve.use, solution: M},		
+			coherence_intervals: M0,
+			mean_count: Kbar,
+			est_rate: Kbar / T,
+			degeneracy_param: Kbar / M0,
+			snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
+			coherence_time: T / M0,
+			fit_stats: M
+		});
+	}
 	
-	cb({
-		fits: {solver: solve.use, solution: M},		
-		coherence_intervals: M0,
-		mean_count: Kbar,
-		est_rate: Kbar / T,
-		degeneracy_param: Kbar / M0,
-		snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
-		coherence_time: T / M0,
-		fit_stats: M
-	});
+	else
+		cb( null );
 }
 
 function index(keys, dims) {
@@ -1875,8 +1898,9 @@ switch (0) {
 			//symbols: [-1,0,1],
 			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 			
+			batch: 50,  // supervised learning every 50 steps
+			
 			solve:  {
-				batch: 50,  // supervised learning every 50 steps
 				lma: [50]  // unsuervised learning method to learn coherence intervals
 				// bfs: [5,200,5]
 				// lfa: [50]
@@ -1914,10 +1938,11 @@ switch (0) {
 		var ran = new RAN({
 
 			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+
+			batch: 50,  // supervised learning every 50 steps
 			
 			solve:  {
 				use: "lma",
-				batch: 50,
 				lma: [50]
 				// bfs: [5,200,5]
 				// lfa: [50]
@@ -1944,8 +1969,9 @@ switch (0) {
 				}, cb);
 			},			
 
+			batch: 50,  // supervised learning every 50 steps
+
 			solve:  {
-				batch: 50,
 				lma: [50]
 				// bfs: [5,200,5]
 				// lfa: [50]
