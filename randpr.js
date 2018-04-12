@@ -103,17 +103,18 @@ class RAN {
 			batch: 0, 				// batch size in steps before next estimate
 			
 			// unsupervised learning parms			
-			solve: {   // count stats parms
+			solve: null, /* {   // count stats parms
 				use: "lma", 		// use lma solution for number of coherence intervals
+				dim: 20, 			// max coherence intervals / pc dim
 				lma: [50]			// using levenberg-marquardt [initial]
 				// bfs: [5,200,5]	// using brute force search [min,max,inc]
 				// lfa: [50]			// using linear feactor analysis [initial]
-			}, 
+			}, */
 			
 			// KL model parms
 			models: ["sinc"],  // models to generate via model() method
 			Mmax: 20, // max number of coherence intervals to model
-			Mstep: 5, 
+			Mstep: 5,  // interval steps
 			
 			// sampling parms
 			halt: false, // default state when learning
@@ -516,7 +517,7 @@ class RAN {
 		if (cb) cb(null);
 	}
 	
-	getpcs(model, min, M, win, ctx, cb) {
+	getpcs(model, Emin, M, Mwin, Mmax, ctx, cb) {
 		cb(ctx, null);
 	}
 		
@@ -580,6 +581,8 @@ class RAN {
 		$use(J, function (n) {  // count frequencies across the ensemble
 			H[ J[n] ]++;
 		});
+		
+		//J.forEach( (j,n) => Log(n,j) );
 		
 		eventStats(H, T, N, solve, cb);	
 	}
@@ -750,36 +753,40 @@ class RAN {
 		
 	config( cb) {
 		
-		var ran = this, N = this.Mmax, dM = this.Mstep;
+		var ran = this, dim = this.Mmax, step = this.Mstep;
 		
 		ran.models.forEach( function (model) {
 			
-			for (var M=1; M<N; M+=dM) {
-				var ctx = {
-					A: 
-						//ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) 
-						ME.matrix( ran[model]( N, M ) )
-				};
+			Log("ran config", model, dim, step);
+			var corr_model = ran[model];
+			
+			if (corr_model)
+				for (var M=1; M<dim; M+=step) {
+					var ctx = {
+						A: 
+							//ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) 
+							ME.matrix( corr_model( dim, M ) )
+					};
 
-				ME.eval( "R=evd(A); ", ctx);
+					ME.eval( "R=evd(A); ", ctx);
 
-				var R = ctx.R;
-				
-				if (false) {  // debugging
-					//Log("lambda", R.values._data);
-					ME.eval( "e=R.vectors'*R.vectors; x=R.vectors*diag(R.values); y = A*R.vectors; ", ctx);
-					Log("e", ctx.e._data);  
-					Log("x", ctx.x._data[N-1]);  
-					Log("y", ctx.y._data[N-1]);	 
+					var R = ctx.R;
+
+					if (false) {  // debugging
+						//Log("lambda", R.values._data);
+						ME.eval( "e=R.vectors'*R.vectors; x=R.vectors*diag(R.values); y = A*R.vectors; ", ctx);
+						Log("e", ctx.e._data);  
+						Log("x", ctx.x._data[dim-1]);  
+						Log("y", ctx.y._data[dim-1]);	 
+					}
+
+					cb({
+						model: model,
+						intervals: M,
+						values: R.values._data,
+						vectors: R.vectors._data
+					});
 				}
-
-				cb({
-					model: model,
-					intervals: M,
-					values: R.values._data,
-					vectors: R.vectors._data
-				});
-			}
 		});
 		
 	}
@@ -933,7 +940,7 @@ class RAN {
 					var pc = solve.pc;				
 
 					if (pc)
-						ran.getpcs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, rec, function (rec, pcs) {
+						ran.getpcs( pc.model||"sinc", pc.min||0, stats.coherence_intervals, ran.Mstep/2, pc.dim || ran.Mmax, rec, function (rec, pcs) {
 							if (pcs) {
 								var 
 									evals = pcs.values,
@@ -953,14 +960,21 @@ class RAN {
 										V: ME.matrix( evecs )
 									};
 
-								ME.eval( "A=B*V; lambda = abs(A);" , ctx);
+								if (N) {
+									ME.eval( "A=B*V; lambda = abs(A);" , ctx);
 
-								//Log("lam est=", ctx.lambda._data);
-								Copy( Copy( stats, {
-									intensity: ctx.lambda._data,
-									mean_count: Wbar,
-									mean_intensity: Wbar / T
-								}), rec.unsupervised );
+									//Log("lam est=", ctx.lambda._data);
+									Copy( Copy( stats, {
+										intensity: ctx.lambda._data,
+										mean_count: Wbar,
+										mean_intensity: Wbar / T
+									}), rec.unsupervised );
+								}
+								
+								else
+									Copy({
+										error: `coherence intervals ${stats.coherence_intervals} > max pc dim`
+									}, rec.unsupervised );
 								
 								done(rec);
 							}
@@ -1687,7 +1701,7 @@ function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence 
 			G[k] = exp( logGamma[k] );
 		}),
 		*/
-		Nevs = $sum(H), 	// number of events
+		Nevs = 0, 	// number of events
 		Kmax = H.length,  // max count
 		Kbar = 0,  // mean count
 		K = [],  // count list
@@ -1711,8 +1725,11 @@ function eventStats(H, T, N, solve, cb) { // unsupervised learning of coherence 
 				p[k] = H[k] / N;
 		});
 
+	//H.forEach( (h,n) => Log([n,h]) );
+	
 	$use(H, function (k) {
 		Kbar += k * fK[k];
+		Nevs += k * H[k];
 	});
 
 	$use(fK, function (k) {   
