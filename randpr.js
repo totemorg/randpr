@@ -687,12 +687,12 @@ class RAN {
 			batch = this.batch;
 
 		if ( ran.learn ) { // learning mode
-			Log("start learn", ran.halt);
+			//Log("start learn", ran.halt);
 			if (!ran.halt)
 				ran.learn( function (evs, cb) {  // get events batch
 					
 					if (evs) {
-						Log("feeding",evs.length, evs[0].t);
+						//Log("feeding",evs.length, evs[0].t);
 						ran.step(evs);
 					}
 					
@@ -708,7 +708,7 @@ class RAN {
 		}
 		
 		else { // generative mode			
-			Log("start gen", ran.steps, ran.N);
+			//Log("start gen", ran.steps, ran.N);
 			ran.step();
 			if ( batch ) ran.onBatch();
 			while (ran.s < ran.steps) {  // advance process to end
