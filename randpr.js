@@ -1,4 +1,4 @@
-'$use strict';
+'use strict';
 /*
 To Do
 + Add VA/EM methods to compute the N-state trans probs.
@@ -29,15 +29,12 @@ var 		// external modules
 	GAMMA = JSLIB.GAMMA,
 	NRAP = JSLIB.NRAP,
 	LM = JSLIB.LM,
+	//ME = require('../jslab/node_modules/mathjs'),
 	ZETA = JSLIB.ZETA;
 
-const { Copy,Each,Log } = require("enum");
+const { Copy,Each,Log,$,$$ } = require("enum");
 
-var
-	sqrt = Math.sqrt, floor = Math.floor, rand = Math.random,
-	cos = Math.cos, sin = Math.sin,
-	abs = Math.abs, PI = Math.PI,
-	log = Math.log, exp = Math.exp;
+const { sqrt, floor, random, cos, sin, abs, PI, log, exp} = Math;
 
 class RAN {
 	
@@ -195,7 +192,7 @@ class RAN {
 			var	
 				dims = obs.dims || [2,2],
 				states = 1,
-				drop = $use(dims, (n,D) => states *= D[n] ),
+				drop = dims.use( (n,D) => states *= D[n] ),
 				K = this.K = states,
 				weights = obs.weights,
 				D = dims.length,
@@ -207,16 +204,16 @@ class RAN {
 						n = 0,
 
 						mu = $(D, (i,mu) =>
-							mu[i] = grid[k][n++] + 0.5 + (rand() - 0.5)*weights[i]
+							mu[i] = grid[k][n++] + 0.5 + (random() - 0.5)*weights[i]
 						),
 
 						L = $$(D,D, (i,j, L) => 	// lower trianular $$ with real, positive diagonal
-							L[i][j] = (i <= j ) ? rand() : 0
+							L[i][j] = (i <= j ) ? random() : 0
 						), 
 
 						sigma = $$(D,D, function (i,j, A) { // hermitian pos-def $$ via cholesky decomp
 							var dot = 0;
-							$use(L, function (n) {
+							L.use( function (n) {
 								dot += L[i][n] * L[j][n];
 							});
 							A[i][j] = dot * weights[i] * weights[j]
@@ -237,13 +234,13 @@ class RAN {
 					var K = this.K;
 					switch (trP) {
 						case "random":
-							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = rand() );
-							$use(trP, function (fr) {
+							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
+							trP.use( function (fr) {
 								var 
 									P = trP[fr],
-									sum = $sum( P );
+									sum = P.sum( );
 
-								$use(P, (to,P) => P[to] /= sum);
+								P.use( (to,P) => P[to] /= sum);
 							});
 							break;
 					}
@@ -352,20 +349,18 @@ class RAN {
 		// initialize ensemble
 		
 		if ( this.learn ) {  // learning mode
-			$use(U, function(n) {   
-				H[n] = U0[n] = U[n] = 0;
-			});
+			U.use( (n) => H[n] = U0[n] = U[n] = 0 );
 		}
 		
 		else { // generative mode
-			$use(cumP, function (fr) {  // initialize cummulative state transition probabilties
+			cumP.use(  (fr) => {  // initialize cummulative state transition probabilties
 				cumulative( cumP[fr] );  
 			});
 
 			if (K == 2) {  // initialize two-state process (same as K-state init but added control)
 				var R01=R[0][1], R10=R[1][0];
 
-				$use(U, function (n) {
+				U.use( (n) => {
 					if ( n < Np ) {
 						var fr = U0[n] = U[n] = 1;
 						H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
@@ -380,8 +375,8 @@ class RAN {
 			}
 
 			else  // initialize K-state process
-				$use(U, function (n) {
-					var fr = floor(rand() * K);
+				U.use( (n) => {
+					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					H[ n ] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					Y[ n ] = obs ? obs.emP[0].sample() : 0; 				
@@ -403,15 +398,11 @@ class RAN {
 		
 		function Gillespie( fr, P, R ) {  // compute cumulative trans probs P given holding times R
 			var R0 = R[fr], K = P.length;
-			$use(P, function (to) {
-				P[to] = delta(fr,k) ? 0 : R[to] / R0;
-			});
+			P.use( (to) => P[to] = delta(fr,k) ? 0 : R[to] / R0 );
 
 			cumulative(P);	
 			var P0 = P[K-1];
-			$use(P, function (to) {
-				P[to] /= P0;
-			});
+			P.use( (to) => P[to] /= P0 );
 		}
 	
 		var 
@@ -430,7 +421,7 @@ class RAN {
 
 		// get new state by taking a random jump according to cummulative P[fr,to]
 			
-		for (var Pfr = cumP[fr], u=rand(), to=0; to < K && Pfr[to] <= u; to++) ;
+		for (var Pfr = cumP[fr], u=random(), to=0; to < K && Pfr[to] <= u; to++) ;
 		if (to == K) to--;
   		
 		if ( fr != to ) {  // take jump
@@ -464,7 +455,7 @@ class RAN {
 		ran.gamma[s] = ran.statCorr();
 
 		//$use(U1,U);  // hold current states U in the U1 buffer used to update the N1 counters
-		$use(U, (n) => U1[n] = U[n]);
+		U.use( (n) => U1[n] = U[n] );
 		
 		if (evs) { // learning mode 
 			if (!t) { // initialize states at t=0
@@ -473,10 +464,8 @@ class RAN {
 					U[ n ] = ev.u || 0;  // state = 0 if unsupervised
 					Y[ n ] = [ev.x, ev.y, ev.z];  // observations
 				});
-				//$use(U0, U);
-				//$use(U1, U);
-				$use(U, (n) => U0[n] = U[n]);
-				$use(U, (n) => U1[n] = U[n]);	
+				U.use( (n) => U0[n] = U[n] );
+				U.use( (n) => U1[n] = U[n] );	
 			}
 				
 			evs.each(function (n,ev) {   // assume events have been time-ordered
@@ -502,7 +491,7 @@ class RAN {
 		}
 
 		else  // generative mode
-			$use(U, function (n) {
+			U.use( (n) => {
 				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
 				//Log(">>>>>",n,held);
 				
@@ -519,11 +508,11 @@ class RAN {
 				}
 			});	
 
-		$use(U, function (n) {   // adjust stat covariance from-to counters for computing correlations
+		U.use( (n) => {   // adjust stat covariance from-to counters for computing correlations
 			N0[ U0[n] ][ U[n] ]++; 
 		});
 
-		$use(U, function (n) {  // adjust 1-step transition counters for computing joint (not conditional) 1-step trans probs
+		U.use( (n) => {  // adjust 1-step transition counters for computing joint (not conditional) 1-step trans probs
 			N1[ U1[n] ][ U[n] ]++;
 		});
 
@@ -545,409 +534,6 @@ class RAN {
 		ran.t += ran.dt; ran.s++;
 	}
 	
-	coherenceIntervals(solve, cb) { // unsupervised learning of coherence intervals M, SNR, etc
-	/*
-		H[k] = observation freqs at count level k
-		T = observation time
-		N = number of observations
-		solve = {use: "lma" | ...,  lma: [initial M], lfa: [initial M], bfs: [start, end, increment M] }
-		callback cb(unsupervised estimates)
-	*/
-		function logNB(k,a,x) { // negative binomial objective function
-		/*
-		return log{ p0 } where
-			p0(x) = negbin(a,k,x) = (gamma(k+x)/gamma(x))*(1+a/x)**(-x)*(1+x/a)**(-k) 
-			a = <k> = average count
-			x = script M = coherence intervals
-			k = count level
-		 */
-			var
-				ax1 =  1 + a/x,
-				xa1 = 1 + x/a,
-
-				// slower log Gamma works with optimizers
-				logGx = GAMMA.log(x),
-				logGkx = GAMMA.log(k+x), 
-				logGk1 = GAMMA.log(k+1);
-
-				// indexed log Gamma faster, but produces round-off errors that cause optimizers to fail
-				// logGx = logGamma[ floor(x) ],
-				// logGkx = logGamma[ floor(k + x) ],
-				// logGk1 = logGamma[ floor(k + 1) ];
-
-			return logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
-		}
-
-		function LFA(init, f, logp) {  // linear-factor-analysis (via newton raphson) for chi^2 extrema - use at your own risk
-		/*
-		1-parameter (x) linear-factor analysis
-		k = possibly compressed list of count bins
-		init = initial parameter values [a0, x0, ...] of length N
-		logf  = possibly compressed list of log count frequencies
-		a = Kbar = average count
-		x = M = coherence intervals		
-		*/
-
-			function p1(k,a,x) { 
-			/*
-			return p0'(x) =
-						(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * gamma[k + x]/gamma[x] 
-							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, x)/gamma[x] 
-							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]*polygamma(0, k + x)/gamma[x] 
-							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*gamma[k + x]/( a*(1 + x/a)*gamma[x] )			
-
-					=	(1 + x/a)**(-k)*(a/x + 1)**(-x)*(a/(x*(a/x + 1)) - log(a/x + 1)) * G[k + x]/G[x] 
-							- (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(x)*G[k + x]/G[x] 
-							+ (1 + x/a)**(-k)*(a/x + 1)**(-x)*PSI(k + x)*G[k + x]/G[x] 
-							- k*(1 + x/a)**(-k)*(a/x + 1)**(-x)*G[k + x]/G[x]/( a*(1 + x/a) )			
-
-					=	G[k + x]/G[x] * (1 + a/x)**(-x) * (1 + x/a)**(-k) * {
-							(a/(x*(a/x + 1)) - log(a/x + 1)) - PSI(x) + PSI(k + x) - k / ( a*(1 + x/a) ) }
-
-					= p(x) * { (a/x) / (1+a/x) - (k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
-
-					= p(x) * { (a/x - k/a) / (1+x/a) - log(1+a/x) + Psi(k+x) - Psi(x)  }
-
-				where
-					Psi(x) = polyGamma(0,x)
-			 */
-				var
-					ax1 =  1 + a/x,
-					xa1 = 1 + x/a,
-
-					// indexed Psi may cause round-off problems in optimizer
-					psix = Psi[ floor(x) ], 
-					psikx = Psi[ floor(k + x) ], 
-
-					slope = (a/x - k/a)/ax1 - log(ax1) + psikx - psix;
-
-				return exp( logp(k,a,x) ) * slope;  // the slope may go negative so cant return logp1		
-			}
-
-			function p2(k,a,x) {  // not used
-			/*
-			return p0" = 
-					(1 + x/a)**(-k)*(a/x + 1)**(-x)*( a**2/(x**3*(a/x + 1)**2) 
-						+ (a/(x*(a/x + 1)) - log(a/x + 1))**2 - 2*(a/(x*(a/x + 1)) - log(a/x + 1) )*polygamma(0, x) 
-					+ 2*(a/(x*(a/x + 1)) - log(a/x + 1))*polygamma(0, k + x) 
-					+ polygamma(0, x)**2 
-					- 2*polygamma(0, x)*polygamma(0, k + x) + polygamma(0, k + x)**2 - polygamma(1, x) + polygamma(1, k + x) 
-					- 2*k*(a/(x*(a/x + 1)) - log(a/x + 1))/(a*(1 + x/a)) + 2*k*polygamma(0, x)/(a*(1 + x/a)) 
-					- 2*k*polygamma(0, k + x)/(a*(1 + x/a)) + k**2/(a**2*(1 + x/a)**2) + k/(a**2*(1 + x/a)**2))*gamma(k + x)/gamma(x);
-			 */
-				var
-					ax1 =  1 + a/x,
-					xa1 = 1 + x/a,
-					xak = xa1**(-k),
-					axx = ax1**(-x),
-
-					// should make these unindexed log versions
-					gx = logGamma[ floor(x) ],
-					gkx = logGamma[ floor(k + x) ],
-
-					logax1 = log(ax1),
-					xax1 = x*ax1,
-					axa1 = a*xa1,				
-
-					// should make these Psi 
-					pg0x = polygamma(0, x),
-					pg0kx = polygamma(0, k + x);
-
-				return xak*axx*(a**2/(x**3*ax1**2) + (a/xax1 - logax1)**2 - 2*(a/xax1 - logax1)*pg0x 
-							+ 2*(a/xax1 - logax1)*pg0kx + pg0x**2 
-							- 2*pg0x*pg0kx + pg0kx**2 - polygamma(1, x) + polygamma(1, k + x) 
-							- 2*k*(a/xax1 - logax1)/axa1 + 2*k*pgx/axa1 - 2*k*pg0kx/axa1 
-							+ k**2/(a**2*xa1**2) + k/(a**2*xa1**2))*gkx/gx;
-			}
-
-			function chiSq1(f,a,x) { 
-			/*
-			return chiSq' (x)
-			*/
-				var 
-					sum = 0,
-					Kmax = f.length;
-
-				for (var k=1; k<Kmax; k++) sum += ( exp( logp0(a,k,x) ) - f[k] ) * p1(a,k,x);
-
-				//Log("chiSq1",a,x,Kmax,sum);
-				return sum;
-			}
-
-			function chiSq2(f,a,x) {
-			/*
-			return chiSq"(x)
-			*/
-				var
-					sum =0,
-					Kmax = f.length;
-
-				for (var k=1; k<Kmax; k++) sum += p1(a,k,x) ** 2;
-
-				//Log("chiSq2",a,x,Kmax,sum);
-				return 2*sum;
-			}
-
-			var
-				Mmax = 400,
-				Kmax = f.length + Mmax,
-				eps = $(Kmax, (k,A) => A[k] = 1e-3),
-				Zeta = $(Kmax, (k,Z) => 
-					Z[k] = k ? ZETA(k+1) : -0.57721566490153286060   // -Z[0] is euler-masheroni constant
-				), 
-				Psi1 = $sum(Zeta),
-				Psi = $(Kmax, (x,P) =>   // recurrence to build the diGamma Psi
-						P[x] = x ? P[x-1] + 1/x : Psi1 
-				);
-
-			return NRAP( (x) => chiSq1(f, Kbar, x), (x) => chiSq2(f, Kbar, x), init[0]);  // 1-parameter newton-raphson
-		}
-
-		function LMA(init, k, logf, logp) {  // levenberg-marquart algorithm for chi^2 extrema
-		/*
-		N-parameter (a,x,...) levenberg-marquadt algorithm where
-		k = possibly compressed list of count bins
-		init = initial parameter values [a0, x0, ...] of length N
-		logf  = possibly compressed list of log count frequencies
-		a = Kbar = average count
-		x = M = coherence intervals
-		*/
-
-			switch ( init.length ) {
-				case 1:
-					return LM({  // 1-parm (x) levenberg-marquadt
-						x: k,  
-						y: logf
-					}, function ([x]) {
-						//Log(Kbar, x);
-						return (k) => logp(k, Kbar, x);
-					}, {
-						damping: 0.1, //1.5,
-						initialValues: init,
-						//gradientDifference: 0.1,
-						maxIterations: 1e3,  // >= 1e3 with compression
-						errorTolerance: 10e-3  // <= 10e-3 with compression
-					});
-					break;
-
-				case 2:
-
-					switch ("2stage") {
-						case "2parm":  // greedy 2-parm (a,x) approach will often fail when LM attempts an x<0
-							return LM({  
-								x: k,  
-								y: logf  
-							}, function ([x,u]) {
-								Log(x,u);
-								//return (k) => logp(k, Kbar, x, u);
-								return x ? (k) => logp(k, Kbar, x, u) : (k) => -50;
-							}, {
-								damping: 0.1, //1.5,
-								initialValues: init,
-								//gradientDifference: 0.1,
-								maxIterations: 1e2,
-								errorTolerance: 10e-3
-							});
-
-						case "2stage":  // break 2-parm (a,x) into 2 stages
-							var
-								x0 = init[0],
-								u0 = init[1],
-								fit = LM({  // levenberg-marquadt
-									x: k,  
-									y: logf
-								}, function ([u]) {
-									//Log("u",u);
-									return (k) => logp(k, Kbar, x0, u);
-								}, {
-									damping: 0.1, //1.5,
-									initialValues: [u0],
-									//gradientDifference: 0.1,
-									maxIterations: 1e3,  // >= 1e3 with compression
-									errorTolerance: 10e-3  // <= 10e-3 with compression
-								}),
-								u0 = fit.parameterValues[0],
-								fit = LM({  // levenberg-marquadt
-									x: k,  
-									y: logf
-								}, function ([x]) {
-									//Log("x",x);
-									return (k) => logp(k, Kbar, x, u0);
-								}, {
-									damping: 0.1, //1.5,
-									initialValues: [x0],
-									//gradientDifference: 0.1,
-									maxIterations: 1e3,  // >= 1e3 with compression
-									errorTolerance: 10e-3  // <= 10e-3 with compression
-								}),
-								x0 = fit.parameterValues[0];
-
-							fit.parameterValues = [x0, u0];
-							return fit;	
-						}
-					break;	
-			}
-		}
-
-		function BFS(init, f, logp) {   // brute-force-search for chi^2 extrema
-		/*
-		1-parameter (x) brute force search
-		k = possibly compressed list of count bins
-		init = initial parameter values [a0, x0, ...] of length N
-		logf  = possibly compressed list of log count frequencies
-		a = Kbar = average count
-		x = M = coherence intervals			
-		*/
-			function NegBin(NB, Kbar, M, logp) {
-				$use(NB, function (k) {
-					NB[k] = exp( logp(k, Kbar, M) );
-				});
-			}
-
-			function chiSquared(p, f, N) {
-				var chiSq = 0, err = 0;
-				$use(p, function (k) {
-					//chiSq += (H[k] - N*p[k])**2 / (N*p[k]);
-					chiSq += (f[k] - p[k])**2 / p[k];
-				});
-				return chiSq * N;
-			}
-
-			var
-				pRef = $(f.length),
-				Mbrute = 1,
-				chiSqMin = 1e99;
-
-			for (var M=init[0], Mmax=init[1], Minc=init[2]; M<Mmax; M+=Minc) {  // brute force search
-				NegBin(pRef, Kbar, M, logNB);
-				var chiSq = chiSquared(pRef, fK, N);
-
-				Log(M, chiSq, $sum(pRef) );
-
-				if (chiSq < chiSqMin) {
-					Mbrute = M;
-					chiSqMin = chiSq;
-				}
-			} 
-			return Mbrute;
-		}
-
-		var
-			/*
-			logGamma = $(Ktop , function (k, logG) {
-				logG[k] = (k<3) ? 0 : GAMMA.log(k);
-			}),
-			*/
-			/*
-			Gamma = $(Ktop, function (k,G) {
-				G[k] = exp( logGamma[k] );
-			}),
-			*/
-			H = this.F,
-			N = this.N,
-			T = this.t,
-			
-			Nevs = 0, 	// number of events
-			Kmax = H.length,  // max count
-			Kbar = 0,  // mean count
-			K = [],  // count list
-			compress = solve.lfa ? false : true,   // enable pdf compression if not using lfa
-			interpolate = !compress,
-			fK = $(Kmax, function (k, p) {    // count frequencies
-				if (interpolate)  {
-					if ( H[k] ) 
-						p[k] = H[k] / N;
-
-					else
-					if ( k ) {
-						N += H[k-1];
-						p[k] = H[k-1] / N;
-					}
-
-					else
-						p[k] = 0;
-				}
-				else
-					p[k] = H[k] / N;
-			});
-
-		//H.forEach( (h,n) => Log([n,h]) );
-
-		$use(H, function (k) {
-			Kbar += k * fK[k];
-			Nevs += k * H[k];
-		});
-
-		$use(fK, function (k) {   
-			if ( compress ) {
-				if ( fK[k] ) K.push( k );
-			}
-			else
-				K.push(k); 
-		});
-
-		var
-			M = 0,
-			Mdebug = 0,
-			logfK = $(K.length, function (n,logf) {  // observed log count frequencies
-				if ( Mdebug ) { // enables debugging
-					logf[n] = logNB(K[n], Kbar, Mdebug);
-					//logf[n] += (n%2) ? 0.5 : -0.5;  // add some "noise" for debugging
-				}
-				else
-					logf[n] = fK[ K[n] ] ? log( fK[ K[n] ] ) : -7;
-			});
-
-		Log({
-			Kbar: Kbar, 
-			T: T, 
-			N: N, 
-			Kmax: Kmax,
-			Nevs: Nevs,
-			ci: [compress, interpolate]
-		});
-
-		if (false)
-			$use(K, function (n) {
-				var k = K[n];
-				Log(n, k, logNB(k,Kbar,55), logNB(k,Kbar,65), log( fK[k] ), logfK[n] );
-			});
-
-		if ( Kmax >= 2 ) {
-			var M = {};
-
-			if (solve.lma) {  // levenberg-marquadt algorithm for [M, ...]
-				M.fits = LMA( solve.lma, K, logfK, logNB);
-				M.lma = M.fits.parameterValues[0];
-			}
-
-			if (solve.lfa)  { // linear factor analysis for M using newton-raphson search over chi^2. UAYOR !  (compression off, interpolation on)
-				M.lfa = LFA( solve.lfa, fK, logNB);
-			}
-
-			if (solve.bfs) { // brute force search for M
-				M.bfs = BFS( solve.bfs, fK, logNB);
-			}
-
-			var M0 = M[solve.use || "lma"];
-
-			cb({
-				events: Nevs,
-				fits: {solver: solve.use, solution: M},		
-				coherence_intervals: M0,
-				mean_count: Kbar,
-				est_rate: Kbar / T,
-				degeneracy_param: Kbar / M0,
-				snr: sqrt( Kbar / ( 1 + Kbar/M0 ) ),
-				coherence_time: T / M0,
-				fit_stats: M
-			});
-		}
-
-		else
-			cb( null );
-	}
-			
 	start ( ) {	  // advance process with possible callbacks to onBatch()
 		var 
 			ran = this,
@@ -957,7 +543,7 @@ class RAN {
 		if ( ran.learn ) { // learning mode
 			//Log("start learn", ran.halt);
 			if (!ran.halt)
-				ran.learn( function (evs, onEnd) {  // get events batch
+				ran.learn( function (evs, cb) {  // get events batch
 					
 					if (evs) {
 						Log("feeding",evs.length, evs[0].t);
@@ -968,7 +554,7 @@ class RAN {
 						Log("halting");
 						ran.halt = true;
 						ran.onEnd();
-						onEnd( );
+						cb( );
 					}
 
 					if ( batch )
@@ -1036,8 +622,8 @@ class RAN {
 		var 
 			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
 
-		$use(symbols, function (fr) {
-			$use(symbols, function (to) {
+		symbols.use( (fr) => {
+			symbols.use( (to) => {
 				p = corP[fr][to] = N0[fr][to] / NS;
 				cor += symbols[fr] * symbols[to] * p;
 			});
@@ -1062,7 +648,7 @@ class RAN {
 		var 
 			ran = this,
 			K = this.K,
-			Kbar = $avg(this.J),
+			Kbar = this.J.avg(),
 			T = this.t,
 			cumH = this.cumH, 
 			cumN = this.cumN,
@@ -1075,17 +661,17 @@ class RAN {
 			max = Math.max,
 			mleP = this.mleP;
 		
-		$$use(Rmle, function (fr,to) {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
+		Rmle.use( (fr,to) => {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
 			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
 			//Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
 		
 		//this.lambda = avgRate(this.Amle);
 
-		$use(N1, function (fr) {  // estimate transition probs using the 1-step state transition counts
+		N1.use( (fr) => {  // estimate transition probs using the 1-step state transition counts
 			var N = N1[fr], P = mleP[fr];
-			$sum( N, function (sum) {
-				$use( P, function (to) {
+			N.sum( (sum) => {
+				P.use( (to) => {
 					P[to] = N[to] / sum;
 				});
 			});
@@ -1139,16 +725,16 @@ class RAN {
 			batch = ran.batch,
 			T = ran.t,
 			Tc = ran.Tc,
-			Kbar = $avg(ran.J),
+			Kbar = ran.J.avg(),
 			M = T / Tc,
 			delta = Kbar / M,
 			J = ran.J,  // number of state jumps (aka events or counts) made by each ensemble member
-			F = ran.F = $( $max(J)+1, $zero );  // count frequencies
+			F = ran.F = $( J.max()+1, $zero );  // count frequencies
 
-		$use(J, function (n) {  // count frequencies across the ensemble
-			F[ J[n] ]++;
-		});
+		J.use( (n) =>F[ J[n] ]++ ); // count frequencies across the ensemble
 
+		//Log("onend J", J);
+		
 		ran.record({
 			at: "end", t: ran.t, s: ran.s,
 			supervised: batch
@@ -1271,7 +857,7 @@ RAN.MLE = JSLIB.MLE;
 module.exports = RAN;
 
 function expdev(mean) {
-	return -mean * log(rand());
+	return -mean * log(random());
 }
 
 function avgRate(A) {  // computes average jump rate in A not necessarily balanced
@@ -1294,14 +880,14 @@ function $zero(i,A) {
 function cumulative( P ) {  // replace P with its cumulative
 	switch (0) {
 		case 0:
-			$use(P, function (k) {
+			P.use( (k) => {
 				if (k) P[k] += P[k-1];
 			});
 			break;
 			
 		case 1:
 			var cum = 0;
-			$use(P, function (k) {
+			P.use( (k) => {
 				var hold = P[k];
 				P[k] = cum;
 				cum += hold;
@@ -1317,16 +903,12 @@ function range (min,max) { // unused - generate a range
 }	
 
 function balanceRates(A) {   // enforce global balance on jump rates
-	$use(A, function (k) {
-		A[k][k] = -$sum(A[k]);
-	});
+	A.use( (k) => A[k][k] = - A[k].sum() );
 	return A;
 }
 
 function balanceProbs(P) {  // enforce global balance on probs
-	$use(P, function (k) {
-		P[k][k] = 1 - $sum(P[k]);
-	});
+	P.use( (k) => P[k][k] = 1 - P[k].sum() );
 	return P;
 }			
 
@@ -1343,7 +925,7 @@ function firstAbsorbTimes(P) {  //< compute first absorption times
 		K = P.length,
 		kAb = [],
 		kTr = [],
-		x = $use(P, function (k) {
+		x = P.use( (k) => {
 			if ( P[k][k] == 1 ) 
 				kAb.push(k+1);
 			else
@@ -1409,9 +991,9 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 		},
 		K = ctx.K;
 
-	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = det(A); ", ctx);
+	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
 	
-	//Log("MRT det=",ctx.Adet);
+	Log("MRT det=",ctx.Adet);
 	
 	if ( ctx.Adet < 1e-3 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
@@ -1487,12 +1069,12 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 		K = alpha.length,
 		N = x[0].length,
 		logBs = $(K, (k,B) => B[k] = GAMMA.log( alpha[k] ) ),
-		logB = $sum(logBs) - GAMMA.log( $sum(alpha) );
+		logB = logBs.sum() - GAMMA.log( alpha.sum() );
 	
-	$use( x = grid, function (n) {
+	grid.use( (n) => {
 		var
-			logAs = $(K, (k,A) => A[k] = (alpha[k] - 1) * log( x[k] ) ),
-			logA = $sum(logAs);
+			logAs = $(K, (k,A) => A[k] = (alpha[k] - 1) * log( grid[k] ) ),
+			logA = logAs.sum();
 	
 		logP[n] = logA - logB;
 	});
