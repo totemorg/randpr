@@ -60,8 +60,8 @@ class RAN {
 			p: 0,  // on state probability
 			q: 0,  // off(not on) state probability
 
-			// event filtering: ev.at = step | config | end | batch | end | ...
-			filter: function (str,ev) {  // append event ev to store/stream str
+			// output event filtering
+			filter: function (str,ev) {  // filter output event ev to store/stream str
 				str.push( ev ); 
 			},
 
@@ -394,6 +394,24 @@ class RAN {
 		if (cb) cb(null);
 	}
 	
+	learn (cb) {  // event getter-responder callsback cb(evs) or cb(null,onEnd) at end
+		var ran = this;
+
+		STEP(ctx, function (ievs, sink) {  // respond on res(oevs)
+			if (ievs) 
+				cb(ievs);
+
+			else 
+				cb(null, function onEnd() {
+					var stats = {  // computed stats given ievs
+					};
+					
+					ran.record( Copy(stats||{error:"cant compute stats"}, {at: "done", t:ran.t, s: ran.s}) );
+					sink( ran.store );
+				});
+		});
+	}
+
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
 		function Gillespie( fr, P, R ) {  // compute cumulative trans probs P given holding times R
@@ -993,7 +1011,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 
 	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
 	
-	Log("MRT det=",ctx.Adet);
+	//Log("MRT det=",ctx.Adet);
 	
 	if ( ctx.Adet < 1e-3 ) {
 		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
