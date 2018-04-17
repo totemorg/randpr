@@ -49,7 +49,22 @@ class RAN {
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
-			learn: null, 	// data getter( cb(events) ) in learning mode (events = null signals pipe end)
+			
+			/**
+			Event getter and poster when in supervised/unsupervised learning mode:
+			
+				learn( function cb(evs, cb) {  // callsback cb(evs) while streamning and cb(null,onEnd) when stream ends
+					
+					if (evs) // feed event through the process in supervised learning
+						ran.step(evs);
+					
+					else { // end feeding, post supervised learning stats and post unsupervised learning stats
+						ran.onEnd(); // post supervised stats
+						cb( );  // generate and post unsupervised stats with ran.onEnd
+					}
+				});
+			*/
+			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
 			// K-state config parameters
 			trP: null, 	// [KxK] from-to state trans probabilities 
@@ -60,7 +75,16 @@ class RAN {
 			p: 0,  // on state probability
 			q: 0,  // off(not on) state probability
 
-			// output event filtering
+			/**
+			Output event filter
+					filter: function (str, ev) { // event ev for stream/store str
+							switch ( ev.at ) {   // streaming plugins provide an "at" to filter events on
+								case "...":
+								case "...":
+									str.push(ev);	// return the event
+							}
+						}  
+			*/
 			filter: function (str,ev) {  // filter output event ev to store/stream str
 				str.push( ev ); 
 			},
@@ -394,7 +418,8 @@ class RAN {
 		if (cb) cb(null);
 	}
 	
-	learn (cb) {  // event getter-responder callsback cb(evs) or cb(null,onEnd) at end
+	/*
+	learn (cb) {  // event getter-poster callsback cb(evs) or cb(null,onEnd) at end
 		var ran = this;
 
 		STEP(ctx, function (ievs, sink) {  // respond on res(oevs)
@@ -406,11 +431,11 @@ class RAN {
 					var stats = {  // computed stats given ievs
 					};
 					
-					ran.record( Copy(stats||{error:"cant compute stats"}, {at: "done", t:ran.t, s: ran.s}) );
+					ran.record({at: "end", t:ran.t, s: ran.s, stat: Copy(stats||{error:"not enough events"}, [])  });
 					sink( ran.store );
 				});
 		});
-	}
+	}*/
 
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
@@ -451,13 +476,6 @@ class RAN {
 		}
 	}
 	
-	end() {  // terminate process
-		var ran = this;
-		
-		this.corrTime();		
-		this.onEnd(); 
-	}
-		
 	step (evs) {  // advance process forward one step
 		var 
 			ran = this,
@@ -590,7 +608,7 @@ class RAN {
 					if ( ran.s % batch == 0 ) ran.onBatch();
 			}
 			
-			ran.end();
+			ran.onEnd();
 		}
 		
 	}
@@ -736,44 +754,6 @@ class RAN {
 		});
 	}
 
-	onEnd() {
-		
-		var 
-			ran = this,
-			batch = ran.batch,
-			T = ran.t,
-			Tc = ran.Tc,
-			Kbar = ran.J.avg(),
-			M = T / Tc,
-			delta = Kbar / M,
-			J = ran.J,  // number of state jumps (aka events or counts) made by each ensemble member
-			F = ran.F = $( J.max()+1, $zero );  // count frequencies
-
-		J.use( (n) =>F[ J[n] ]++ ); // count frequencies across the ensemble
-
-		//Log("onend J", J);
-		
-		ran.record({
-			at: "end", t: ran.t, s: ran.s,
-			supervised: batch
-				? {
-					//jump_rates: ran.Amle, 
-					//stat_corr: $sample(ran.gamma,solve.batch || 1),
-					mle_holding_times: ran.Rmle,
-					rel_trans_prob_error: ran.Perr,
-					mle_trans_prob: ran.mleP,
-					trans_counts: ran.N1,
-					mean_count: Kbar, 
-					coherence_time: Tc, 
-					coherence_intervals: M,
-					mean_intensity: Kbar / T,
-					degeneracy_param: delta,
-					snr: sqrt( Kbar / (1 + delta ) )
-				}
-				: { }
-		});
-	}
-
 	onConfig() {
 		var
 			obs = this.obs,		
@@ -804,8 +784,55 @@ class RAN {
 			//avg_jump_rate: this.lambda,
 			//exp_coherence_time: this.Tc,
 			run_steps: this.steps,
-			absorb_times: ab
+			absorb: ab
 		});
+	}
+	
+	onEnd() {
+		
+		var 
+			ran = this,
+			batch = ran.batch,
+			T = ran.t,
+			Tc = ran.Tc,
+			Kbar = ran.J.avg(),
+			M = T / Tc,
+			delta = Kbar / M,
+			J = ran.J,  // number of state jumps (aka events or counts) made by each ensemble member
+			F = ran.F = $( J.max()+1, $zero );  // count frequencies
+
+		J.use( (n) =>F[ J[n] ]++ ); // count frequencies across the ensemble
+
+		//Log("onend J", J);
+		
+		ran.record({  // record supervised stats
+			at: "end", t: ran.t, s: ran.s,
+			stats: batch
+				? {
+					//jump_rates: ran.Amle, 
+					//stat_corr: $sample(ran.gamma,solve.batch || 1),
+					mle_holding_times: ran.Rmle,
+					rel_trans_prob_error: ran.Perr,
+					mle_trans_prob: ran.mleP,
+					trans_counts: ran.N1,
+					mean_count: Kbar, 
+					coherence_time: Tc, 
+					coherence_intervals: M,
+					mean_intensity: Kbar / T,
+					degeneracy_param: delta,
+					snr: sqrt( Kbar / (1 + delta ) )
+				}
+				: { }
+		});
+	}
+
+	end(stats, saveStore) {  // terminate process
+		var ran = this;
+		
+		//ran.corrTime();		
+		//ran.onEnd();   // post supervised learning stats
+		ran.record({at: "end", t:ran.t, s: ran.s, stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} });  // post unsupervised learning stats
+		saveStore( ran.store );
 	}
 	
 	pipe(sinkStream) {  // pipe events to a sinking stream or to a callback cb(events)
@@ -965,8 +992,9 @@ function firstAbsorbTimes(P) {  //< compute first absorption times
 		ME.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", ctx);
 		
 	return {
-		abT: ctx.abT._data,
-		abP: ctx.abP._data
+		time1st: ctx.abT._data,
+		prob: ctx.abP._data,
+		states: kAb
 	};
 }
 
@@ -1138,7 +1166,7 @@ switch (0) {
 		)); 
 		break;
 		
-	case 2:	  // absorbtion times
+	case 2:	  // absorption times
 		Log( firstAbsorbTimes( 
 			[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 			//[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]  // no absorbing stats
