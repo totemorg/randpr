@@ -307,15 +307,11 @@ class RAN {
 		else
 			return;
 		
-		if ( !this.learn) {
+		if ( !this.learn) {  // in forward/generative mode
 			var 
 				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-				ab = this.ab = firstAbsorbTimes(trP),
-				/*
-				A = this.A = balanceRates( $$(K,K, function (fr, to, A) {  // ctmode jump rates
-					A[fr][to] = (fr == to) ? 0 : nyquist / R[fr][to];
-				}) ), */
-				pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k]	);  // eq state probs
+				ab = this.ab = firstAbsorbTimes(trP),  // first absoption times
+				pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k]	);  // equlib state probs
 		}
 		
 		Log(K, trP, N);
@@ -342,9 +338,6 @@ class RAN {
 
 		// allocate the ensemble
 		var 
-			//Amle = this.Amle = $$(K,K),
-			//lambda = this.lambda = avgRate(this.A),
-			//Tc = this.Tc = 1/lambda,	
 			U1 = this.U1 = $(N),
 			J = this.J = $(N, $zero),
 			Y = this.Y = $(N),
@@ -372,7 +365,7 @@ class RAN {
 
 		// initialize ensemble
 		
-		if ( this.learn ) {  // learning mode
+		if ( this.learn ) {  // in learning mode
 			U.use( (n) => H[n] = U0[n] = U[n] = 0 );
 		}
 		
@@ -394,7 +387,8 @@ class RAN {
 						var fr = U0[n] = U[n] = 0;
 						H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					}
-					Y[ n ] = obs ? obs.emP[0].sample() : 0; 					
+					
+					Y[ n ] = obs ? obs.emP[0].sample() : null; 					
 				});
 			}
 
@@ -403,7 +397,7 @@ class RAN {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					H[ n ] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
-					Y[ n ] = obs ? obs.emP[0].sample() : 0; 				
+					Y[ n ] = obs ? obs.emP[0].sample() : null; 				
 				}); 
 		}
 		
@@ -476,7 +470,7 @@ class RAN {
 		}
 	}
 	
-	step (evs) {  // advance process forward one step
+	step (evs) {  // advance process forward one step (with events evs if in learning mode)
 		var 
 			ran = this,
 			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,N0=this.N0,K=this.K,
@@ -484,71 +478,67 @@ class RAN {
 			Y=this.Y, obs=this.obs,J=this.J,
 			t = this.t, s = this.s, N = this.N;
 		
-		//Log(s,ran.gamma);
-		
-		//Log("K=",K, "trP=", this.trP);
+		//Log(">>",s,ran.gamma);		
+		//Log(">>","K=",K, "trP=", this.trP);
 		
 		ran.gamma[s] = ran.statCorr();
 
-		//$use(U1,U);  // hold current states U in the U1 buffer used to update the N1 counters
-		U.use( (n) => U1[n] = U[n] );
+		U.use( (n) => U1[n] = U[n] );  // hold states to update the N1 counters
 		
-		if (evs) { // learning mode 
-			if (!t) { // initialize states at t=0
+		if (evs) { // in learning mode 
+			if ( !s ) { // initialize states at t=0
 				evs.each( function (i, ev) {
 					var n = ev.n;		// ensemble index
-					U[ n ] = ev.u || 0;  // state = 0 if unsupervised
-					Y[ n ] = [ev.x, ev.y, ev.z];  // observations
+					U[ n ] = ev.u || 0;  // state (0 if unsupervised)
+					Y[ n ] = [ev.x, ev.y, ev.z];  // observations (null if unsupervised)
 				});
-				U.use( (n) => U0[n] = U[n] );
-				U.use( (n) => U1[n] = U[n] );	
-			}
+				U.use( (n) => {
+					U0[n] = U1[n] = U[n];		// initialize states
+					J[n] = -1;  // force initial jump counter to 0
+				});
+			} 
 				
-			evs.each(function (n,ev) {   // assume events have been time-ordered
+			t = this.t = evs[0].t;			
+			evs.each( function (n,ev) {   // assume events have been time-ordered 
 				var 
 					n = ev.n,  // ensemble index = unique event id
 					fr = U[n],   // current state of member (0 when unsupervised)
-					t = ev.t,	// event time
-					to = ev.u;	// event state (if supervised) or undefined (unsupervised, hidden markov model)
+					to = ev.u;	// event state (if supervised) or undefined (if unsupervised)
 				
-				if ( fr != to ) {  // always true when unsupervised
-					//Log("jump", t, n, fr, to);
-					//ran.onJump(n,fr,to,0); 	// callback with jump info (uncomment if needed)
-					cumH[fr][to] += t - H[n]; 	// total holding time in from-to jump
-					cumN[fr][to] ++;  	// total number of from-to jumps
-					
-					J[ n ]++; 		// increment jump counter
-					U[ n ] = to || 0;  		// force state = 0 if unsupervised
-					H[ n ] = t;			// hold jump time
-					Y[ n ] = [ev.x, ev.y, ev.z];  // save observation
-						// obs ? obs.emP[to].sample() : 0;  // save observation
-				}
+				cumH[fr][to] += t - H[n]; 	// total holding time in from-to jump
+				cumN[fr][to] ++;  	// total number of from-to jumps
+
+				J[ n ]++; 		// increment jump counter
+				U[ n ] = to || 0;  		// force state = 0 if unsupervised
+				H[ n ] = t;			// hold current time
+				Y[ n ] = [ev.x, ev.y, ev.z];  // save observations if any
 			});
 		}
 
 		else  // generative mode
 			U.use( (n) => {
 				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
-				//Log(">>>>>",n,held);
+				//Log(">>",n,held);
 				
-				if ( held > 0 ) {   // holding time exceeded so *consider* jump to new state
+				if ( held > 0 )    // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
-						ran.onJump(n,fr,to,hold); 	// callback with jump info
-
 						J[ n ]++; 		// increment jump counter
 						U[ n ] = to;  			// set new state
 						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
-						Y[ n ] = obs ? obs.emP[to].sample() : 0; // save observations
-						//Log(">>>>>>>>",n,to,Y[n],obs);
+						Y[ n ] = obs ? obs.emP[to].sample() : null; // save observations
+						
+						ran.onJump(n,to,hold,Y[n]); 	// callback with jump info
+						//Log(">>>",n,to,Y[n],obs);
 					});
-				}
 			});	
-
-		U.use( (n) => {   // adjust stat covariance from-to counters for computing correlations
+				
+		//if (t<50) Log( t<10 ? "0"+t : t,U,J);		
+		
+		U.use( (n) => {   // adjust initial-to transition counters for computing correlations
 			N0[ U0[n] ][ U[n] ]++; 
 		});
 
-		U.use( (n) => {  // adjust 1-step transition counters for computing joint (not conditional) 1-step trans probs
+		U.use( (n) => {  // adjust 1-step transition counters for computing trans probs
 			N1[ U1[n] ][ U[n] ]++;
 		});
 
@@ -574,32 +564,33 @@ class RAN {
 		var 
 			ran = this,
 			solve = this.solve || {},
+			U = this.U,
+			Y = this.Y,
 			batch = this.batch;
 
-		if ( ran.learn ) { // learning mode
-			//Log("start learn", ran.halt);
-			if (!ran.halt)
-				ran.learn( function (evs, cb) {  // get events batch
-					
-					if (evs) {
-						Log("feeding",evs.length, evs[0].t);
-						ran.step(evs);
-					}
-					
-					else {
-						Log("halting");
-						ran.halt = true;
-						ran.onEnd();
-						cb( );
-					}
+		if ( ran.learn && !ran.halt )  // learning mode
+			ran.learn( function (evs, cb) {  // get events batch
 
-					if ( batch )
-						if ( ran.s % batch == 0 ) ran.onBatch();
-				});
-		}
+				if (evs) {
+					//Log("feeding",evs.length, evs[0].t);
+					ran.step(evs);
+				}
+
+				else {
+					Log("halting");
+					ran.halt = true;
+					ran.onEnd();
+					cb( );
+				}
+
+				if ( batch )
+					if ( ran.s % batch == 0 ) ran.onBatch();
+			});
 		
 		else { // generative mode			
 			//Log("start gen", ran.steps, ran.N);
+			U.use( (n) => ran.onJump (n,U[n],0,Y[n]) );
+			
 			ran.step();
 			if ( batch ) ran.onBatch();
 			while (ran.s < ran.steps) {  // advance process to end
@@ -739,10 +730,10 @@ class RAN {
 		});
 	}
 	
-	onJump (idx,from,to,hold) {  // null to disable
+	onJump (idx,state,hold,obs) {  // null to disable
 		this.record({
 			at:"jump",t: this.t, s: this.s,
-			idx: idx, to:to, from:from, hold:hold
+			idx: idx, state:state, hold:hold, obs:obs
 		});
 	}
 
