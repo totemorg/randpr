@@ -487,6 +487,7 @@ class RAN {
 		
 		if (evs) { // in learning mode 
 			if ( !s ) { // initialize states at t=0
+				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
 					var n = ev.n;		// ensemble index
 					U[ n ] = ev.u || 0;  // state (0 if unsupervised)
@@ -498,7 +499,7 @@ class RAN {
 				});
 			} 
 				
-			t = this.t = evs[0].t;			
+			t = this.t = this.s = evs[0].t;			
 			evs.each( function (n,ev) {   // assume events have been time-ordered 
 				var 
 					n = ev.n,  // ensemble index = unique event id
@@ -663,8 +664,8 @@ class RAN {
 		var abs = Math.abs;
 		for (var s=0, S = this.s, Tc = 0; s<S; s++) Tc += abs(this.gamma[s]) * (1 - s/S);
 		
-		this.Tc = Tc * this.dt / this.gamma[0];
-		Log("Tc=", Tc);
+		return this.Tc = Tc * this.dt / this.gamma[0];
+		//Log("Tc=", Tc);
 	}
 	
 	record (ev) {  // record event ev to store or stream
@@ -785,7 +786,7 @@ class RAN {
 			ran = this,
 			batch = ran.batch,
 			T = ran.t,
-			Tc = ran.Tc,
+			Tc = ran.corrTime(),
 			Kbar = ran.J.avg(),
 			M = T / Tc,
 			delta = Kbar / M,
