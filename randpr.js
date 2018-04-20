@@ -24,11 +24,13 @@ var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
 var 		// external modules
-	LIBS = require("jslab").libs,
+	LAB = require("jslab"),
+	LIBS = LAB.libs,
 	ENUM = require("enum"),
 	ME = LIBS.ME;
 
-const { Copy,Each,Log,$,$$ } = require("enum");
+const { Copy,Each,Log } = require("enum");
+const { $, $$ } = LIBS;
 
 const { sqrt, floor, random, cos, sin, abs, PI, log, exp} = Math;
 
@@ -73,13 +75,13 @@ class RAN {
 
 			/**
 			Output event filter
-					filter: function (str, ev) { // event ev for stream/store str
-							switch ( ev.at ) {   // streaming plugins provide an "at" to filter events on
-								case "...":
-								case "...":
-									str.push(ev);	// return the event
-							}
-						}  
+				filter: function (str, ev) { // event ev for stream/store str
+						switch ( ev.at ) {   // streaming plugins provide an "at" to filter events on
+							case "...":
+							case "...":
+								str.push(ev);	// return the event
+						}
+					}  
 			*/
 			filter: function (str,ev) {  // filter output event ev to store/stream str
 				str.push( ev ); 
@@ -680,8 +682,6 @@ class RAN {
 			//Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
 		
-		//this.lambda = avgRate(this.Amle);
-
 		N1.use( (fr) => {  // estimate transition probs using the 1-step state transition counts
 			var N = N1[fr], P = mleP[fr];
 			N.sum( (sum) => {
@@ -787,8 +787,6 @@ class RAN {
 			at: "end", t: ran.t, s: ran.s,
 			stats: batch
 				? {
-					//jump_rates: ran.Amle, 
-					//stat_corr: $sample(ran.gamma,solve.batch || 1),
 					mle_holding_times: ran.Rmle,
 					rel_trans_prob_error: ran.Perr,
 					mle_trans_prob: ran.mleP,
@@ -807,9 +805,10 @@ class RAN {
 	end(stats, saveStore) {  // terminate process
 		var ran = this;
 		
-		//ran.corrTime();		
-		//ran.onEnd();   // post supervised learning stats
-		ran.record({at: "end", t:ran.t, s: ran.s, stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} });  // post unsupervised learning stats
+		ran.record({  // post unsupervised learning stats
+			at: "end", t:ran.t, s: ran.s, 
+			stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} 
+		});  
 		saveStore( ran.store );
 	}
 	
@@ -818,7 +817,7 @@ class RAN {
 			ran = this,
 			sync = (typeof sinkStream) == "function";
 
-		Log("pipe sync", sync);
+		Trace("STARTING " + (sync ? "sync" : "async") );
 		
 		ran.store = sync
 			? []
@@ -1056,32 +1055,6 @@ function perms(vec,dims,vecs,norm) {  //< generate permutations
 	return vecs;
 }
 
-function $sample(A, delta) {
-	var 
-		k = 0,
-		rtn = $( floor(A.length/delta), (n,R) => R[n] = A[k += delta] );
-		return rtn;
-}
-
-/*
-function index(vec,dims) {  // unused
-	var idx = 0;
-	for (var off=1, n=0, N=dims.length; n<N; n++, idx += vec[N-n]*off, off*=dims[N-n] );
-		
-	return idx;
-}
-*/
-
-/*
-function quantize(vec,mins,dels,dims,clip) {  //< unused
-	for (var floor = Math.floor, n=0, N=vec.length; n<N; n++) {
-		vec[n] = floor( (vec[n] - mins[n]) * dels[n] );
-		clip[n] = vec[n]<0 || vec[n] >=dims[n];
-	}
-	return vec;
-}
-*/
-
 function poisson(m,a) {
 	// a^m e(-a) / m!
 	for (var sum=0,k=m; k; k--) sum += log(k);
@@ -1120,21 +1093,6 @@ function index(keys, dims) {
 }
 
 //======== unit tests
-function _logp0(a,k,x) {  // for case 6.x testing
-	var
-		ax1 =  1 + a/x,
-		xa1 = 1 + x/a,
-		logGx = GAMMA.log(x),
-		logGkx = GAMMA.log(k+x), 
-		logGk1 = GAMMA.log(k+1),
-		//logGx = logGamma[ floor(x) ],
-		//logGkx = logGamma[ floor(k + x) ],
-		//logGk1 = logGamma[ floor(k + 1) ],
-		logp0 = logGkx - logGk1 - logGx  - k*log(xa1) - x*log(ax1);
-
-	Log(a,k,x, logp0);
-	return logp0;
-}
 
 switch (0) {
 	case 1:  // mean recurrence times
@@ -1338,3 +1296,52 @@ switch (0) {
 		break;
 		
 }
+
+[ 
+	function sample(delta) {
+		var 
+			A = this,
+			k = 0,
+			rtn = $( floor(A.length/delta), (n,R) => R[n] = A[k += delta] );
+			return rtn;
+	},
+	
+	function sum(cb) {
+		for (var A=this, Sum=0, k=0, K= A.length; k<K; k++) Sum+= A[k];
+
+		if (cb) cb(Sum,this);
+
+		return Sum;
+	},
+
+	function avg() {
+		return this.sum() / this.length;
+	},
+
+	function max() {
+		var A = this, Amax = -1e99, Aidx = 0;
+		A.use( (k) => {
+			if ( A[k] > Amax ) {
+				Amax = A[k];
+				Aidx = k;
+			}
+		});
+		return Amax;
+	}
+
+	/*function use(cb) {	// use vector A with callback cb(idx,A)
+		var A = this, N = A.length;
+
+		if (A.rows) {
+			var M = A.rows, N = A.columns;
+
+			for (var m=0; m<M; m++) for (var n=0, Am = A[m]; n<N; n++) cb(m,n,A,Am);
+			return A;
+		}
+
+		else
+			for (var n=0,N=A.length; n<N; n++) cb(n,A);
+
+		return A;
+	}	*/
+].extend(Array);
