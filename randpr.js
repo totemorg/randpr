@@ -652,7 +652,7 @@ class RAN {
 		var abs = Math.abs;
 		for (var s=0, S = this.s, Tc = 0; s<S; s++) Tc += abs(this.gamma[s]) * (1 - s/S);
 		
-		return this.Tc = Tc * this.dt / this.gamma[0];
+		return this.Tc = Tc * this.dt / this.gamma[0] / 2;
 		//Log("Tc=", Tc);
 	}
 	
