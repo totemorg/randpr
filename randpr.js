@@ -238,7 +238,7 @@ class RAN {
 		if (trP)
 			switch ( trP.constructor.name ) {
 				case "String":
-					var K = this.K;
+					var K = this.K || 2;
 					switch (trP) {
 						case "random":
 							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
@@ -264,7 +264,7 @@ class RAN {
 					
 				case "Object":
 					var
-						K = this.K,
+						K = this.K || 2,
 						P = $$(K, K, $$zero),
 						dims = obs ? obs.dims : [K];
 
