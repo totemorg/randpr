@@ -115,22 +115,7 @@ class RAN {
 			// supervised learning parms			
 			batch: 0, 				// batch size in steps before next estimate
 			
-			// unsupervised learning parms			
-			ci: null, /* {   // coherence interval solver
-				use: "lma", 		// use lma solution for number of coherence intervals
-				lma: [50]			// using levenberg-marquardt [initial]
-				// bfs: [5,200,5]	// using brute force search [min,max,inc]
-				// lfa: [50]			// using linear feactor analysis [initial]
-			}, */
-			
-			pc: null,  /* {		// principle component solver
-				dim: 20, 			// max coherence intervals / pc dim
-				//models: ["sinc"],  // models to generate via model() method
-				M, // coherence intervals
-				Mmax: 20, // max number of coherence intervals to model
-				Mstep: 5,  // interval steps
-			} */
-			
+			/*
 			models: {
 				sinc: function ( N, M ) {
 					var 
@@ -160,7 +145,7 @@ class RAN {
 				
 				rect: function (N, M) {
 				}
-			},
+			},  */
 
 			// sampling parms
 			halt: false, // default state when learning
@@ -552,7 +537,7 @@ class RAN {
 			ran.learn( function (evs, cb) {  // get events batch
 
 				if (evs) {
-					//Trace("FEEDING",evs.length, evs[0].t);
+					//Trace("FEEDING "+evs.length + " len="+evs[0].t);
 					ran.step(evs);
 				}
 
@@ -562,6 +547,7 @@ class RAN {
 					ran.onEnd();
 					cb({  // callback with ran ctx that can be shared
 						trP: ran.trP,	// transition probs
+						store: ran.store,  // output event store
 						steps: ran.steps,	// process steps
 						T: ran.t,		// observation time
 						F: ran.F,	// event count frequencies
@@ -593,6 +579,7 @@ class RAN {
 		
 	}
 	
+	/*
 	config( cb) {
 		
 		var ran = this, dim = this.Mmax, step = this.Mstep;
@@ -630,7 +617,8 @@ class RAN {
 		});
 		
 	}
-		
+	*/
+	
 	statCorr ( ) {  // statistical correlation function
 		
 		this.samples += this.N;
@@ -671,7 +659,6 @@ class RAN {
 			R = this.R,
 			trP = this.trP,
 			nyquist = this.nyquist,
-			//Amle = this.Amle,
 			Rmle = this.Rmle,
 			N1 = this.N1,
 			max = Math.max,
@@ -809,6 +796,7 @@ class RAN {
 			at: "end", t:ran.t, s: ran.s, 
 			stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} 
 		});  
+		//Log("end store=", ran.store);
 		saveStore( ran.store );
 	}
 	
