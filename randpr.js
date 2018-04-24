@@ -781,6 +781,7 @@ class RAN {
 					mean_count: Kbar, 
 					coherence_time: Tc, 
 					coherence_intervals: M,
+					correlation_0lag: ran.gamma[0],
 					mean_intensity: Kbar / T,
 					degeneracy_param: delta,
 					snr: sqrt( Kbar / (1 + delta ) )
