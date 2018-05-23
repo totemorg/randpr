@@ -1,12 +1,4 @@
 'use strict';
-/*
-To Do
-+ Add VA/EM methods to compute the N-state trans probs.
-+ May want to add a SVD method to recover the [scriptP] trans probs .   This [scriptP]^{some large power} * [p]  --> [equlib p] and therefore
-the [lambda] = [eqlib p] * N. And/or KL the gamma corelation model for the eignvalues, the some of
-which is the integrated intensity.
-*/
-
 /**
 @requires stream
 @requires enum
@@ -928,7 +920,7 @@ function delta(fr,to) {
 }
 
 function Trace(msg,sql) {
-	msg.trace("M>",sql);
+	msg.trace("R>",sql);
 }
 
 function firstAbsorbTimes(P) {  //< compute first absorption times
