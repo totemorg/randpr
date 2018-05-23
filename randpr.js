@@ -549,7 +549,7 @@ class RAN {
 						trP: ran.trP,	// transition probs
 						store: ran.store,  // output event store
 						steps: ran.steps,	// process steps
-						T: ran.t,		// observation time
+						T: ran.steps,		// observation time
 						F: ran.F,	// event count frequencies
 						J: ran.J,		// ensemble jump counts
 						N: ran.N,		// ensemble size
