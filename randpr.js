@@ -1,8 +1,8 @@
 'use strict';
 /**
-@requires stream
-@requires enum
-@requires jslab
+@@requires stream
+@@requires enum
+@@requires jslab
 
 refs:
 www.statslab.cam.ac.uk/~rrw1
