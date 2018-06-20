@@ -526,7 +526,7 @@ class RAN {
 			batch = this.batch;
 
 		if ( ran.learn && !ran.halt )  // learning mode
-			ran.learn( function (evs, cb) {  // get events batch
+			ran.learn( function (evs, cb) {  // process events when evs, or terminate with callback(results) when evs exhausted
 
 				if (evs) {
 					//Trace("FEEDING "+evs.length + " len="+evs[0].t);
