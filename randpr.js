@@ -534,19 +534,19 @@ class RAN {
 				}
 
 				else {
-					Trace("HALTING");
+					//Trace("HALTING");
 					ran.halt = true;
 					ran.onEnd();
 					cb({  // callback with ran ctx that can be shared
 						trP: ran.trP,	// transition probs
 						store: ran.store,  // output event store
-						steps: ran.steps,	// process steps
-						T: ran.steps,		// observation time
+						//steps: ran.steps,	// process steps
+						T: ran.t,		// observation time
 						F: ran.F,	// event count frequencies
 						J: ran.J,		// ensemble jump counts
-						N: ran.N,		// ensemble size
-						U: ran.U,		// ensemble states
-						Y: ran.Y		// ensemble observation(s)
+						N: ran.N		// ensemble size
+						//U: ran.U,		// ensemble states
+						//Y: ran.Y		// ensemble observation(s)
 					});
 				}
 
@@ -995,33 +995,38 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 		},
 		K = ctx.K;
 
-	ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
-	
-	//Log("MRT det=",ctx.Adet);
-	
-	if ( ctx.Adet < 1e-3 ) {
-		Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
-		return $$(K,K, $$zero );
+	if ( K > 1) {
+		ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
+
+		Log("MRT det=",ctx.Adet);
+
+		if ( ctx.Adet < 1e-3 ) {
+			Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
+			return $$(K,K, $$zero );
+		}
+
+		else {
+			ME.eval("wk= -Pu*inv(A);", ctx);
+
+			ctx.w = ME.matrix([1].concat(ctx.wk._data[0]));
+
+			ME.eval("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
+
+			var 
+				H = ctx.H._data,
+				Z = ctx.Z._data,
+				w = ctx.w._data[0];
+
+			for (var fr=0;fr<K; fr++) 
+				for (var to=0; to<K; to++) 
+					H[ fr ][ to ] = ( ( fr == to ) ? 1 / w[ to ] : ( Z[ to ][ to ] - Z[ fr ][ to ] ) / w[ to ] );	
+
+			return H;
+		}
 	}
-		
-	else {
-		ME.eval("wk= -Pu*inv(A);", ctx);
-
-		ctx.w = ME.matrix([1].concat(ctx.wk._data[0]));
-
-		ME.eval("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
-
-		var 
-			H = ctx.H._data,
-			Z = ctx.Z._data,
-			w = ctx.w._data[0];
-
-		for (var fr=0;fr<K; fr++) 
-			for (var to=0; to<K; to++) 
-				H[ fr ][ to ] = ( ( fr == to ) ? 1 / w[ to ] : ( Z[ to ][ to ] - Z[ fr ][ to ] ) / w[ to ] );	
-
-		return H;
-	}
+	
+	else
+		return [[1]];
 }
 
 function perms(vec,dims,vecs,norm) {  //< generate permutations
