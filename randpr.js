@@ -155,7 +155,7 @@ class RAN {
 			ran = this,
 			N = this.N, // ensemble size
 			trP = this.trP, // transition probs KxK or coersed to KxK
-			obs = this.obs, // observation (aka emission) parms
+			obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
 			symbols = this.symbols;  // state symbols
