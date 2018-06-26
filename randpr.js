@@ -15,15 +15,8 @@ www.math.dartmouth.edu/~pw
 var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
-var 		// external modules
-	LAB = require("jslab"),
-	LIBS = LAB.libs,
-	ENUM = require("enum"),
-	ME = LIBS.ME;
-
 const { Copy,Each,Log } = require("enum");
-const { $, $$ } = LIBS;
-
+const { $, $$, EM, MVN, ME } = require("jslab").libs;
 const { sqrt, floor, random, cos, sin, abs, PI, log, exp} = Math;
 
 class RAN {
@@ -39,21 +32,8 @@ class RAN {
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
+			obslist: [], // observation save list
 			
-			/**
-			Event getter and poster when in supervised/unsupervised learning mode:
-			
-				learn( function cb(evs, cb) {  // callsback cb(evs) while streamning and cb(null,onEnd) when stream ends
-					
-					if (evs) // feed event through the process in supervised learning
-						ran.step(evs);
-					
-					else { // end feeding, post supervised learning stats and post unsupervised learning stats
-						ran.onEnd(); // post supervised stats
-						cb( );  // generate and post unsupervised stats with ran.onEnd
-					}
-				});
-			*/
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
 			// K-state config parameters
@@ -93,52 +73,20 @@ class RAN {
 			R: null, 	// [KxK] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities K' <= K
-			mleP: null, 	// [KxK] from-to state mle trans probabilities
+			mleA: null, 	// [KxK] from-to state mle trans probabilities
 			corP: null, 	// [KxK] stat correlation probabilities
 			cumP: null,	// [KxK] from-to cummulative state transition probabilities
 			N0: null, 	// [KxK] from-to cummulative counts in to-state given starting from-state
 			N1: null,	// [KxK] from-to state transition counts
 			cumH: null, 	// [KxK] cummulative time in from-to transition
 			cumN: null, 	// [KxK] cummulative number of from-to jumps
-			pi: null, 	// [K] equilibrium state probabilities 
+			eqP: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
 			obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 
 			// supervised learning parms			
 			batch: 0, 				// batch size in steps before next estimate
 			
-			/*
-			models: {
-				sinc: function ( N, M ) {
-					var 
-						T = 1,
-						Tc = T/M,
-						dt = T/N/2,
-						area = 0,
-						dx =  PI * dt / Tc; 
-
-					//for (var n= -N, x = n*dx; n<N; n++, x += dx) area += (x ? abs(sin(x)/x) : 1)*dx;
-					//Log(N,M,dx,area);
-
-					return $$( N, N, (m,n,A) => {
-						if ( m == n ) 
-							A[m][n] = 1;
-						else
-						if ( n > m ) {
-							var x = dx * (n-m);
-							A[m][n] = sin( x ) / x;
-							//A[m][n] /= area;
-							//Log(m,n-m,x,A[m][n]);
-						}
-						else
-							A[m][n] = A[n][m];
-					});
-				},
-				
-				rect: function (N, M) {
-				}
-			},  */
-
 			// sampling parms
 			halt: false, // default state when learning
 			Tc: 0,  // coherence time >0 [s] 
@@ -221,7 +169,7 @@ class RAN {
 					mus.push( mu );
 					sigmas.push( sigma );
 
-					gen[k] = RAN.MVN( mu, sigma );
+					gen[k] = MVN( mu, sigma );
 				});
 
 			//Log(obs.mu, obs.sigma);
@@ -285,8 +233,8 @@ class RAN {
 		if ( !this.learn) {  // in forward/generative mode
 			var 
 				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-				ab = this.ab = firstAbsorbTimes(trP),  // first absoption times
-				pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k]	);  // equlib state probs
+				ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
+				eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/R[k][k]	);  // equlib state probs
 		}
 		
 		Log(K, trP, N);
@@ -317,12 +265,12 @@ class RAN {
 			J = this.J = $(N, $zero),
 			Y = this.Y = $(N),
 			N1 = this.N1 = $$(K,K,$$zero),	
-			mleP = this.mleP = $$(K,K,$$zero), 
+			mleA = this.mleA = $$(K,K,$$zero), 
 			cumH = this.cumH = $$(K,K,$$zero),
 			cumN = this.cumN = $$(K,K,$$zero),
 			cumP = this.cumP = $$(K,K,(fr,to,P) => P[fr][to] = trP[fr][to] ),
 			Rmle = this.Rmle = $$(K,K),
-			Perr = this.Perr = 1,
+			err = this.err = 1,
 			corP = this.corP = $$(K,K),
 			obs=this.obs,
 			p = 1/K,
@@ -377,7 +325,7 @@ class RAN {
 		}
 		
 		if ( this.wiener ) {  //  initialilze wiener processes
-			this.NRV = RAN.MVN( [0], [[1]] );
+			this.NRV = MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
 		}
 
@@ -429,7 +377,7 @@ class RAN {
 	step (evs) {  // advance process forward one step (with events evs if in learning mode)
 		var 
 			ran = this,
-			U=this.U,H=this.H,R=this.R,U0=this.U0,mleP=this.mleP,N0=this.N0,K=this.K,
+			U=this.U,H=this.H,R=this.R,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
 			Y=this.Y, obs=this.obs,J=this.J,
 			t = this.t, s = this.s, N = this.N;
@@ -482,9 +430,8 @@ class RAN {
 						J[ n ]++; 		// increment jump counter
 						U[ n ] = to;  			// set new state
 						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
-						Y[ n ] = obs ? obs.emP[to].sample() : null; // save observations
 						
-						ran.onJump(n,to,hold,Y[n]); 	// callback with jump info
+						ran.onJump(n,to,hold, obs ? obs.emP[to].sample() : null ); 	// callback with jump info
 						//Log(">>>",n,to,Y[n],obs);
 					});
 			});	
@@ -517,7 +464,7 @@ class RAN {
 		ran.t += ran.dt; ran.s++;
 	}
 	
-	start ( ) {	  // advance process with possible callbacks to onBatch()
+	start ( ) {	  // start process in supervised learning (reverse) or unsupervised generative (forward) mode
 		var 
 			ran = this,
 			solve = this.solve || {},
@@ -525,8 +472,8 @@ class RAN {
 			Y = this.Y,
 			batch = this.batch;
 
-		if ( ran.learn && !ran.halt )  // learning mode
-			ran.learn( function (evs, cb) {  // process events when evs, or terminate with callback(results) when evs exhausted
+		if ( ran.learn && !ran.halt )  // supervised learning mode
+			ran.learn( function supervisor(evs, cb) {  // process events when evs, or terminate with callback(results) when evs exhausted
 
 				if (evs) {
 					//Trace("FEEDING "+evs.length + " len="+evs[0].t);
@@ -537,7 +484,7 @@ class RAN {
 					//Trace("HALTING");
 					ran.halt = true;
 					ran.onEnd();
-					cb({  // callback with ran ctx that can be shared
+					cb({  // callback with a ran ctx 
 						trP: ran.trP,	// transition probs
 						store: ran.store,  // output event store
 						//steps: ran.steps,	// process steps
@@ -554,9 +501,9 @@ class RAN {
 					if ( ran.s % batch == 0 ) ran.onBatch();
 			});
 		
-		else { // generative mode			
+		else { // unsupervised generative mode
 			//Log("start gen", ran.steps, ran.N);
-			U.use( (n) => ran.onJump (n,U[n],0,Y[n]) );
+			//U.use( (n) => ran.onJump (n,U[n],0,Y[n]) );
 			
 			ran.step();
 			if ( batch ) ran.onBatch();
@@ -570,46 +517,6 @@ class RAN {
 		}
 		
 	}
-	
-	/*
-	config( cb) {
-		
-		var ran = this, dim = this.Mmax, step = this.Mstep;
-		
-		ran.models.forEach( function (model) {
-			
-			Log("ran config", model.name, dim, step);
-			
-			for (var M=1; M<dim; M+=step) {
-				var ctx = {
-					A: 
-						//ME.matrix( [[1,0,0],[0,2,0], [0,0,3]]) 
-						ME.matrix( model( dim, M ) )
-				};
-
-				ME.eval( "R=evd(A); ", ctx);
-
-				var R = ctx.R;
-
-				if (false) {  // debugging
-					//Log("lambda", R.values._data);
-					ME.eval( "e=R.vectors'*R.vectors; x=R.vectors*diag(R.values); y = A*R.vectors; ", ctx);
-					Log("e", ctx.e._data);  
-					Log("x", ctx.x._data[dim-1]);  
-					Log("y", ctx.y._data[dim-1]);	 
-				}
-
-				cb({
-					model: model.name,
-					intervals: M,
-					values: R.values._data,
-					vectors: R.vectors._data
-				});
-			}
-		});
-		
-	}
-	*/
 	
 	statCorr ( ) {  // statistical correlation function
 		
@@ -654,7 +561,7 @@ class RAN {
 			Rmle = this.Rmle,
 			N1 = this.N1,
 			max = Math.max,
-			mleP = this.mleP;
+			mleA = this.mleA;
 		
 		Rmle.use( (fr,to) => {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
 			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
@@ -662,28 +569,31 @@ class RAN {
 		});
 		
 		N1.use( (fr) => {  // estimate transition probs using the 1-step state transition counts
-			var N = N1[fr], P = mleP[fr];
-			N.sum( (sum) => {
-				P.use( (to) => {
-					P[to] = N[to] / sum;
+			var Nfr = N1[fr], Afr = mleA[fr];
+			Nfr.sum( (sum) => {
+				Afr.use( (to) => {
+					Afr[to] = Nfr[to] / sum;
 				});
 			});
 		});
 		
 		var 
-			Perr = this.Perr = trP 
-				? ( mleP[0][0] - trP[0][0] ) / trP[K-1][K-1]
-				: 0;
+			err = this.err = trP   // relative error between mle and actual trans probs
+				? ( mleA[0][0] - trP[0][0] ) / trP[K-1][K-1]
+				: 0,
+			
+			mleB = this.mleB = EM( this.obslist, 4);
 		
 		/*
 		$$use(Rmle, function (fr,to) {
-			Perr[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+			err[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
 		}); */
 		
 		this.record({
 			at:"batch",t: this.t-this.dt, s: this.s-1,
-			rel_trans_prob_error: Perr,
-			//mle_trans_prob: mleP,
+			rel_error: err,
+			mle_em_prob: mleB,
+			mle_tr_prob: mleA,
 			stat_corr: this.gamma[ this.s-1 ]
 		});		
 	}
@@ -697,6 +607,9 @@ class RAN {
 	}
 	
 	onJump (idx,state,hold,obs) {  // null to disable
+		
+		if (this.batch) this.obslist.push( obs );
+		
 		this.record({
 			at:"jump",t: this.t, s: this.s,
 			idx: idx, state:state, hold:hold, obs:obs
@@ -717,8 +630,8 @@ class RAN {
 			trP = this.trP,
 			K = this.K,
 			R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-			pi = this.pi = $(K, (k,pi) => pi[k] = 1/R[k][k] ),   // eq state probs
-			ab = this.ab = firstAbsorbTimes(trP);			
+			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/R[k][k] ),   // eq state probs
+			ab = this.ab = firstAbsorb(trP);			
 		
 		this.record({
 			at: "config", t: this.t, s: this.s,
@@ -729,7 +642,7 @@ class RAN {
 			cummulative_trans_prob: this.cumP,
 			trans_prob: trP,
 			recurrence_times: R,
-			equlib_prob: pi,
+			equlib_prob: eqP,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
 			mixing: obs 
@@ -767,8 +680,9 @@ class RAN {
 			stats: batch
 				? {
 					mle_holding_times: ran.Rmle,
-					rel_trans_prob_error: ran.Perr,
-					mle_trans_prob: ran.mleP,
+					rel_error: ran.err,
+					mle_em_prob: ran.mleB,
+					mle_tr_prob: ran.mleA,
 					trans_counts: ran.N1,
 					mean_count: Kbar, 
 					coherence_time: Tc, 
@@ -853,10 +767,6 @@ class RAN {
 		
 }
 
-// share the Gauss Multivariate and its MLE 
-RAN.MVN = LIBS.MVN.default; 
-RAN.MLE = LIBS.MLE;
-
 module.exports = RAN;
 
 function expdev(mean) {
@@ -923,7 +833,7 @@ function Trace(msg,sql) {
 	msg.trace("R>",sql);
 }
 
-function firstAbsorbTimes(P) {  //< compute first absorption times
+function firstAbsorb(P) {  //< compute first absorption times, probs and states
 	var 
 		K = P.length,
 		kAb = [],
@@ -950,8 +860,8 @@ function firstAbsorbTimes(P) {  //< compute first absorption times
 		ME.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", ctx);
 		
 	return {
-		time1st: ctx.abT._data,
-		prob: ctx.abP._data,
+		times: ctx.abT._data,
+		probs: ctx.abP._data,
 		states: kAb
 	};
 }
@@ -1089,7 +999,7 @@ switch (0) {
 		break;
 		
 	case 2:	  // absorption times
-		Log( firstAbsorbTimes( 
+		Log( firstAbsorb( 
 			[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 			//[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]  // no absorbing stats
 		));
@@ -1132,7 +1042,7 @@ switch (0) {
 		
 	case 3:  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
 		var ran = new RAN({
-			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> pi[k] = 1/K  eqpr)
+			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> eqP[k] = 1/K  eqpr)
 			//trP: [[.6, .4],[.4, .6]],
 			//trP: [[0.83177, 0.16822], [0.17152, 0.82848]],
 			//trP: [[.5, .5], [.5, .5]],
