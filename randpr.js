@@ -1,3 +1,5 @@
+// UNCLASSIFIED
+
 'use strict';
 /**
 @@requires stream
@@ -33,6 +35,7 @@ class RAN {
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			obslist: [], // observation save list
+			stateKey: "u",  // event key for state symbol
 			
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
@@ -66,11 +69,11 @@ class RAN {
 			U0: null, 	// [N] initial states at time t = 0
 			U1: null, 	// [N] state buffer 
 			J: null,  // [N] jump counter
-			H: null, 	// [N] next jump time
+			HT: null, 	// [N] next jump time
 			WU: null, 		// [N] wiener/SFI ensemble
 			WQ: null, 		// [N] wiener/SFI ensemble for cummulative walks
 			
-			R: null, 	// [KxK] from-to holding (mean recurrence) times
+			RT: null, 	// [KxK] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities K' <= K
 			mleA: null, 	// [KxK] from-to state mle trans probabilities
@@ -104,7 +107,7 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			trP = this.trP, // transition probs KxK or coersed to KxK
+			trP = this.trP || {K:0}, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
@@ -226,72 +229,66 @@ class RAN {
 		}
 		*/
 		
-		if (trP)
-			switch ( trP.constructor.name ) {
-				case "String":
-					var K = this.K || 2;
-					switch (trP) {
-						case "random":
-							trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
-							trP.use( function (fr) {
-								var 
-									P = trP[fr],
-									sum = P.sum( );
+		switch ( trP.constructor.name ) {
+			case "String":
+				var K = this.K || 2;
+				switch (trP) {
+					case "random":
+						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
+						trP.use( function (fr) {
+							var 
+								P = trP[fr],
+								sum = P.sum( );
 
-								P.use( (to,P) => P[to] /= sum);
-							});
-							break;
+							P.use( (to,P) => P[to] /= sum);
+						});
+						break;
+				}
+				break;
+
+			case "Array":
+				var
+					K = this.K = trP.length;
+
+				break;
+				//Kto = trP[0].length,
+				//P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
+				//trP = this.trP = P;
+
+			case "Object":
+				var
+					K = this.K = trP.K || 0,
+					P = $$(K, K, $$zero),
+					dims = emP ? emP.dims : [K];
+
+				for (var frKey in trP) {
+					var 
+						frP = trP[frKey],
+						frIndex = index( frKey.split(","), dims );
+
+					//Log("fr", frKey, frIndex);
+
+					for (var toKey in frP) {
+						var toIndex = index( toKey.split(","), dims );
+						P[frIndex][toIndex] = frP[toKey];
 					}
-					break;
+				}
 
-				case "Array":
-					var
-						K = this.K = trP.length;
-					
-					break;
-					//Kto = trP[0].length,
-					//P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
-					//trP = this.trP = P;
-					
-				case "Object":
-					var
-						K = this.K = trP.K || 2,
-						P = $$(K, K, $$zero),
-						dims = emP ? emP.dims : [K];
-
-					for (var frKey in trP) {
-						var 
-							frP = trP[frKey],
-							frIndex = index( frKey.split(","), dims );
-
-						//Log("fr", frKey, frIndex);
-
-						for (var toKey in frP) {
-							var toIndex = index( toKey.split(","), dims );
-							P[frIndex][toIndex] = frP[toKey];
-						}
-					}
-
-					balanceProbs(P);
-					trP = this.trP = P;
-					Log("trP", trP);
-					break;
-			}
-		
-		else
-			return;
-		
-		if ( !this.learn) {  // in forward/generative mode
-			var 
-				R = this.R = meanRecurTimes(trP),  // from-to mean recurrence times
-				ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
-				eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/R[k][k]	);  // equlib state probs
+				balanceProbs(P);
+				trP = this.trP = P;
+				Log("trP", trP);
+				break;
 		}
+		
+		var 
+			RT = this.RT = meanRecurTimes(trP),  // from-to mean recurrence times
+			ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
+			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k]	);  // equlib state probs
 		
 		Log(K, trP, N);
 		
 		if ( !symbols ) {  // default state symbols
-			var symbols = this.symbols = $(K);
+			var symbols = this.symbols = {}; //$(K);
 			
 			if (K % 2) {
 				symbols[0]=0;
@@ -328,7 +325,7 @@ class RAN {
 			p = 1/K,
 			Np = p * N,
 			N0 = this.N0 = $$(K,K, (fr,to,N0) => N0[fr][to] = delta(fr,to) ? Np : 0 ),
-			H = this.H = $(N),
+			HT = this.HT = $(N),
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
 			ctmode = this.ctmode,
@@ -341,7 +338,7 @@ class RAN {
 		// initialize ensemble
 		
 		if ( this.learn ) {  // in learning mode
-			U.use( (n) => H[n] = U0[n] = U[n] = 0 );
+			U.use( (n) => HT[n] = U0[n] = U[n] = 0 );
 		}
 		
 		else { // generative mode
@@ -350,17 +347,17 @@ class RAN {
 			});
 
 			if (K == 2) {  // initialize two-state process (same as K-state init but added control)
-				var R01=R[0][1], R10=R[1][0];
+				var R01=RT[0][1], R10=RT[1][0];
 
 				U.use( (n) => {
 					if ( n < Np ) {
 						var fr = U0[n] = U[n] = 1;
-						H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+						HT[n] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					}
 
 					else {
 						var fr = U0[n] = U[n] = 0;
-						H[n] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+						HT[n] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					}
 					
 					//Y[ n ] = obs ? obs.emP[0].sample() : null; 					
@@ -371,7 +368,7 @@ class RAN {
 				U.use( (n) => {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
-					H[ n ] = R[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+					HT[ n ] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					//Y[ n ] = obs ? obs.emP[0].sample() : null; 				
 				}); 
 		}
@@ -389,9 +386,9 @@ class RAN {
 	
 	jump (fr, held, cb) {   // if process can jump, callback cb(from-state, to-state, next holding time) 
 		
-		function Gillespie( fr, P, R ) {  // compute cumulative trans probs P given holding times R
-			var R0 = R[fr], K = P.length;
-			P.use( (to) => P[to] = delta(fr,k) ? 0 : R[to] / R0 );
+		function Gillespie( fr, P, RT ) {  // compute cumulative trans probs P given holding times RT
+			var R0 = RT[fr], K = P.length;
+			P.use( (to) => P[to] = delta(fr,k) ? 0 : RT[to] / R0 );
 
 			cumulative(P);	
 			var P0 = P[K-1];
@@ -399,11 +396,11 @@ class RAN {
 		}
 	
 		var 
-			K = this.K, R = this.R, cumP = this.cumP, A = this.A, cumH = this.cumH, cumN = this.cumN;
+			K = this.K, RT = this.RT, cumP = this.cumP, A = this.A, cumH = this.cumH, cumN = this.cumN;
 
 		switch (this.jumpModel) {  // reseed jump rates if time-inhomogenous model
 			case "gillespie":  // reseed trans probs using Gillespie model (provides a time-inhomogeneous process)
-				Gillespie( fr, cumP[fr], R[fr] );
+				Gillespie( fr, cumP[fr], RT[fr] );
 				break;
 
 			case "":
@@ -419,9 +416,9 @@ class RAN {
   		
 		if ( fr != to ) {  // take jump
 			//this.jumps++;  // increase jump counter
-			cb( fr, to, R[fr][fr] = this.ctmode ? expdev( 1/A[fr][to] ) : 0 );  // draw and store holding time (0) in ctime (dtime) mode
+			cb( fr, to, RT[fr][fr] = this.ctmode ? expdev( 1/A[fr][to] ) : 0 );  // draw and store holding time (0) in ctime (dtime) mode
 
-			cumH[fr][to] += held; //R[fr][fr];  // cummulative holding time in from-to jump
+			cumH[fr][to] += held; //RT[fr][fr];  // cummulative holding time in from-to jump
 			cumN[fr][to] ++;  // cummulative number of from-to jumps
 		}
 	}
@@ -429,9 +426,10 @@ class RAN {
 	step (evs) {  // advance process forward one step (with events evs if in learning mode)
 		var 
 			ran = this,
-			U=this.U,H=this.H,R=this.R,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
+			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
 			// Y=this.Y, obs=this.obs,
+			symbols=this.symbols, stateKey = this.stateKey,
 			emP = this.emP,
 			J=this.J,
 			t = this.t, s = this.s, N = this.N;
@@ -448,7 +446,7 @@ class RAN {
 				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
 					var n = ev.n;		// ensemble index
-					U[ n ] = ev.u || 0;  // state (0 if unsupervised)
+					U[ n ] = symbols[ev[stateKey]] || 0;  // state (0 if unsupervised)
 					//Y[ n ] = [ev.x, ev.y, ev.z];  // observations (null if unsupervised)
 				});
 				U.use( (n) => {
@@ -462,28 +460,28 @@ class RAN {
 				var 
 					n = ev.n,  // ensemble index = unique event id
 					fr = U[n],   // current state of member (0 when unsupervised)
-					to = ev.u;	// event state (if supervised) or undefined (if unsupervised)
+					to = symbols[ev[stateKey]];	// event state (if supervised) or undefined (if unsupervised)
 				
-				cumH[fr][to] += t - H[n]; 	// total holding time in from-to jump
+				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
 				cumN[fr][to] ++;  	// total number of from-to jumps
 
 				J[ n ]++; 		// increment jump counter
 				U[ n ] = to || 0;  		// force state = 0 if unsupervised
-				H[ n ] = t;			// hold current time
+				HT[ n ] = t;			// hold current time
 				//Y[ n ] = [ev.x, ev.y, ev.z];  // save observations if any
 			});
 		}
 
 		else  // generative mode
 			U.use( (n) => {
-				var held = t - H[n];  // H[n] = 0 (so held>0) in discrete time mode 
+				var held = t - HT[n];  // HT[n] = 0 (so held>0) in discrete time mode 
 				//Log(">>",n,held);
 				
 				if ( held > 0 )    // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						J[ n ]++; 		// increment jump counter
 						U[ n ] = to;  			// set new state
-						H[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
+						HT[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
 						
 						//ran.onJump(n,to,hold, obs ? obs.emP[to].sample() : null ); 	// callback with jump info
 						ran.onJump(n,to,hold, emP ? emP.gen[to]() : null ); 	// callback with jump info
@@ -580,13 +578,20 @@ class RAN {
 		var 
 			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
 
+		/*
 		symbols.use( (fr) => {
 			symbols.use( (to) => {
 				p = corP[fr][to] = N0[fr][to] / NS;
 				cor += symbols[fr] * symbols[to] * p;
 			});
-		});
+		});*/
 
+		for (var fr in symbols)
+			for (var to in symbols) {
+				p = corP[fr][to] = N0[fr][to] / NS;
+				cor += symbols[fr] * symbols[to] * p;
+			}
+		
 		return cor ; 
 	}
 
@@ -610,7 +615,7 @@ class RAN {
 			T = this.t,
 			cumH = this.cumH, 
 			cumN = this.cumN,
-			R = this.R,
+			RT = this.RT,
 			trP = this.trP,
 			nyquist = this.nyquist,
 			Rmle = this.Rmle,
@@ -619,7 +624,7 @@ class RAN {
 			obslist = this.obslist,
 			mleA = this.mleA;
 		
-		Rmle.use( (fr,to) => {   // estimate jump rates using cummulative H[fr][to] and N[fr][to] jump times and counts
+		Rmle.use( (fr,to) => {   // estimate jump rates using cummulative HT[fr][to] and N[fr][to] jump times and counts
 			Rmle[fr][to] = delta(fr,to) ? 0 : nyquist * cumH[fr][to] / cumN[fr][to];
 			//Amle[fr][to] = delta(fr,to) ? 0 : nyquist / Rmle[fr][to];
 		});
@@ -640,7 +645,7 @@ class RAN {
 			
 		/*
 		$$use(Rmle, function (fr,to) {
-			err[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - R[fr][to] ) / R[fr][to] ;
+			err[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - RT[fr][to] ) / RT[fr][to] ;
 		}); */
 		
 		this.record({
@@ -684,8 +689,8 @@ class RAN {
 			trP = this.trP,
 			emP = this.emP,
 			K = this.K,
-			R = this.R, // = meanRecurTimes(trP),  // from-to mean recurrence times
-			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/R[k][k] ),   // eq state probs
+			RT = this.RT, // = meanRecurTimes(trP),  // from-to mean recurrence times
+			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k] ),   // eq state probs
 			ab = this.ab = firstAbsorb(trP);			
 		
 		this.record({
@@ -696,7 +701,7 @@ class RAN {
 			//jump_rates: this.A,
 			cummulative_trans_prob: this.cumP,
 			trans_prob: trP,
-			mean_recurrence_times: R,
+			mean_recurrence_times: RT,
 			equlib_prob: eqP,
 			initial_activity: this.p,
 			wiener_walks: this.wiener ? "yes" : "no",
@@ -918,7 +923,7 @@ function firstAbsorb(P) {  //< compute first absorption times, probs and states
 	
 	//Log("ab ctx", JSON.stringify(ctx));
 	if ( ctx.nAb && ctx.nTr )
-		ME.eval("Q = P[kTr,kTr]; R = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*R;", ctx);
+		ME.eval("Q = P[kTr,kTr]; RT = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*RT;", ctx);
 		
 	return {
 		times: ctx.abT._data,
@@ -1054,7 +1059,7 @@ function index(keys, dims) {
 		var 
 			A = this,
 			k = 0,
-			rtn = $( floor(A.length/delta), (n,R) => R[n] = A[k += delta] );
+			rtn = $( floor(A.length/delta), (n,RT) => RT[n] = A[k += delta] );
 			return rtn;
 	},
 	
@@ -1098,10 +1103,8 @@ function index(keys, dims) {
 	}	*/
 ].extend(Array);
 
-//======== unit tests
-
-switch (3) {
-	case 1:  // mean recurrence times
+switch (process.argv[2]) {   //< unit tests
+	case "R1":  // mean recurrence times
 		Log( meanRecurTimes(  
 			[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
 /*
@@ -1136,7 +1139,7 @@ MRT det= 0.09375
 		)); 
 		break;
 		
-	case 2:	  // absorption times
+	case "R2":	  // absorption times
 		Log( firstAbsorb( 
 			//[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 /*
@@ -1154,7 +1157,7 @@ MRT det= 0.09375
 		));
 		break;
 		
-	case 2.1:  // config methods
+	case "R2.1":  // config methods
 		var ran = new RAN({
 			//trP: [[0.1, 0.9], [0.1, 0.9]]
 /*
@@ -1183,7 +1186,7 @@ symbols [ 0, 1, -1 ]
 		});
 		break;
 
-	case 2.3:
+	case "R2.3":
 		var ran = new RAN({
 			emP: {
 				dims: [3,3],
@@ -1252,7 +1255,7 @@ symbols [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
 */
 		break;
 		
-	case 2.4:
+	case "R2.4":
 		var ran = new RAN({
 			emP: {
 				dims: [2,2,2],
@@ -1262,7 +1265,7 @@ symbols [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
 		});
 		break;
 		
-	case 3:  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
+	case "R3":  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
 		var ran = new RAN({
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> eqP[k] = 1/K  eqpr)
 			//trP: [[.6, .4],[.4, .6]],
@@ -1348,7 +1351,7 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 		});
 		break;
 		
-	case 3.1:  // async pipes - unsupervised and supervised learning 
+	case "R3.1":  // async pipes - unsupervised and supervised learning 
 		var ran = new RAN({
 
 			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
@@ -1372,7 +1375,7 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 		
 		break;		
 		
-	case 3.2:  // unsupervised learning 
+	case "R3.2":  // unsupervised learning 
 		var ran = new RAN({
 
 			learn: function (cb) {
@@ -1421,14 +1424,15 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 		//> Kbar= 9.06 500 50 18 -> 13 true false		
 		break;	
 				
-	case 4.1:  // observation permutations
+	case "R4.1":  // observation permutations
 		Log(perms([],[2,6,4],[]));
 		break;
 					
-	case 4.2:  // observation permutations
+	case "R4.2":  // observation permutations
 		Log(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
 		}));
 		break;
-		
 }
+
+// UNCLASSIFIED
