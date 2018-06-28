@@ -27,14 +27,14 @@ class RAN {
 
 			N: 1, 		// ensemble size
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
-			symbols: null, 	// [K] state symbols (default = 0:K-1)
+			states: null, 	// state indecies K || ["state", ...] || {state: index, ...} defaults to [0, 1, ...]
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			obslist: [], // observation save list
-			stateKey: "u",  // event key for state symbol
+			keys: {x:"x", y:"y", z:"z", u:"u", t:"t"},  // event key for state symbol
 			
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
@@ -63,7 +63,7 @@ class RAN {
 			},
 
 			// internal variables
-			K: 0, 		// number of states (state = [0:K-1], symbol = symbols[state])
+			K: 0, 		// number of states (state = [0:K-1], symbol = states[state])
 			//Y: null, 	// [N] observation at time t
 			U: null,    // [N] states at time t
 			U0: null, 	// [N] initial states at time t = 0
@@ -106,12 +106,12 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			trP = this.trP || {K:0}, // transition probs KxK or coersed to KxK
+			trP = this.trP, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
-			symbols = this.symbols;  // state symbols
+			states = this.states;  // state symbols
 
 		if ( this.p ) {   // two-state process via p,Tc
 			var
@@ -128,7 +128,7 @@ class RAN {
 		}
 
 		else
-		if ( this.alpha  )  { // two-state process via alpha,beta
+		if ( this.alpha )  { // two-state process via alpha,beta
 			var 
 				alpha = this.alpha,
 				beta = this.beta, 
@@ -142,9 +142,9 @@ class RAN {
 		if ( emP ) {
 			if (dims = emP.dims) {
 				var 
-					states = 1,
-					drop = dims.use( (n,Dims) => states *= Dims[n] ),
-					K = this.K = states,
+					Kstates = 1,
+					drop = dims.use( (n,Dims) => Kstates *= Dims[n] ),
+					K = this.K = Kstates,
 					weights = emP.weights,
 					D = dims.length,
 					grid = emP.grid = perms( [], dims, []),  // state grid	
@@ -230,7 +230,7 @@ class RAN {
 		
 		switch ( trP.constructor.name ) {
 			case "String":
-				var K = this.K || 2;
+				var K = this.K = states || 2;
 				switch (trP) {
 					case "random":
 						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
@@ -256,10 +256,11 @@ class RAN {
 
 			case "Object":
 				var
-					K = this.K = trP.K || 0,
+					K = this.K = trP.states || 2,
 					P = $$(K, K, $$zero),
 					dims = emP ? emP.dims : [K];
 
+				delete trP.states;
 				for (var frKey in trP) {
 					var 
 						frP = trP[frKey],
@@ -286,25 +287,42 @@ class RAN {
 		
 		Log(K, trP, N);
 		
-		if ( !symbols ) {  // default state symbols
-			var symbols = this.symbols = {}; //$(K);
+		states = states || K || 2;
+		
+		switch ( states.constructor.name ) {
+			case "Object":
+				K = 0;
+				for (var key in states) K++;
+				this.K = K;
+				break;
+				
+			case "Array":
+				for (var syms = {}, k=0, K=states.length; k<K; k++) syms[ states[k] ] = k;
+				this.K = K;
+				states = this.states = syms;
+				break;
+				
+			default:
+				K = this.K = states;
+				states = this.states = {};
 			
-			if (K % 2) {
-				symbols[0]=0;
-				for (var a=1, k=1; k<K; a++) {
-					symbols[k++] = a; 
-					symbols[k++] = -a;
+				if (K % 2) {
+					states[0] = 0;
+					for (var a=1, k=1; k<K; a++) {
+						states[k++] = a; 
+						states[k++] = -a;
+					}
 				}
-			}
-			
-			else			
-				for (var a=1, k=0; k<K; a++) {
-					symbols[k++] = a; 
-					symbols[k++] = -a;
-				}
-			
-			Log("symbols",symbols);
+
+				else			
+					for (var a=1, k=0; k<K; a++) {
+						states[k++] = a; 
+						states[k++] = -a;
+					}
+
 		}
+
+		Log("states",states);	
 
 		// allocate the ensemble
 		var 
@@ -427,7 +445,7 @@ class RAN {
 			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
 			// Y=this.Y, obs=this.obs,
-			symbols=this.symbols, stateKey = this.stateKey,
+			states=this.states, keys = this.keys,
 			emP = this.emP,
 			J=this.J,
 			t = this.t, s = this.s, N = this.N;
@@ -444,7 +462,7 @@ class RAN {
 				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
 					var n = ev.n;		// ensemble index
-					U[ n ] = symbols[ev[stateKey]] || 0;  // state (0 if unsupervised)
+					U[ n ] = states[ev[keys.u]] || 0;  // state (0 if unsupervised)
 					//Y[ n ] = [ev.x, ev.y, ev.z];  // observations (null if unsupervised)
 				});
 				U.use( (n) => {
@@ -458,7 +476,7 @@ class RAN {
 				var 
 					n = ev.n,  // ensemble index = unique event id
 					fr = U[n],   // current state of member (0 when unsupervised)
-					to = symbols[ev[stateKey]];	// event state (if supervised) or undefined (if unsupervised)
+					to = states[ev[keys.u]];	// event state (if supervised) or undefined (if unsupervised)
 				
 				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
 				cumN[fr][to] ++;  	// total number of from-to jumps
@@ -573,20 +591,20 @@ class RAN {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, symbols = this.symbols, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
+			K = this.K, states = this.states, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
 
 		/*
-		symbols.use( (fr) => {
-			symbols.use( (to) => {
+		states.use( (fr) => {
+			states.use( (to) => {
 				p = corP[fr][to] = N0[fr][to] / NS;
-				cor += symbols[fr] * symbols[to] * p;
+				cor += states[fr] * states[to] * p;
 			});
 		});*/
 
-		for (var fr in symbols)
-			for (var to in symbols) {
+		for (var fr in states)
+			for (var to in states) {
 				p = corP[fr][to] = N0[fr][to] / NS;
-				cor += symbols[fr] * symbols[to] * p;
+				cor += states[fr] * states[to] * p;
 			}
 		
 		return cor ; 
@@ -1160,9 +1178,9 @@ MRT det= 0.09375
 /*
 MRT det= 0.09999999999999998
 2 [ [ 0.1, 0.9 ], [ 0.1, 0.9 ] ] 1
-symbols [ 1, -1 ]
+states [ 1, -1 ]
 */
-			trP: { K:3, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
+			trP: { states:3, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
 /*
 trP [ [ 0.09999999999999998, 0.8, 0.1 ],
   [ 0.1, 0.9, 0 ],
@@ -1178,7 +1196,7 @@ Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of t
   [ 0, 0, 1 ],
   rows: 3,
   columns: 3 ] 1
-symbols [ 0, 1, -1 ]
+states [ 0, 1, -1 ]
 */
 		});
 		break;
@@ -1189,7 +1207,7 @@ symbols [ 0, 1, -1 ]
 				dims: [3,3],
 				weights: [1,1]
 			},
-			trP: { K:9, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
+			trP: { states:9, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
 		});
 /*
 trP [ [ 0.09999999999999998, 0.8, 0.1, 0, 0, 0, 0, 0, 0 ],
@@ -1248,7 +1266,7 @@ Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of t
   [ 0, 0, 0, 0, 0, 0, 0, 0, 1 ],
   rows: 9,
   columns: 9 ] 1
-symbols [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
+states [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
 */
 		break;
 		
@@ -1293,11 +1311,11 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 			//trP: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
 			//trP: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
-			//symbols: [-1,1],
+			//states: [-1,1],
 
 			//trP: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
 			//trP: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
-			//symbols: [-1,0,1],
+			//states: [-1,0,1],
 			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 			
 			emP: {
