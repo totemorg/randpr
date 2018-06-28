@@ -17,7 +17,6 @@ www.math.dartmouth.edu/~pw
 var			// nodejs modules
 	STREAM = require("stream");			// data streams
 
-//const { Copy,Each,Log } = require("enum");
 const { $, $$, EM, MVN, ME, Copy, Each, Log } = require("jslab").libs;
 const { sqrt, floor, random, cos, sin, abs, PI, log, exp} = Math;
 
@@ -40,7 +39,8 @@ class RAN {
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
 			// K-state config parameters
-			trP: null, 	// [KxK] from-to state trans probabilities 
+			trP: null, 	// [KxK] from-to state trans probs
+			emP: null, // {mu,sigma,dims} emmision probs
 
 			// K=2 state config parameters
 			alpha: 0,  // on-to-off rate [jumps/s]
@@ -87,7 +87,6 @@ class RAN {
 			eqP: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
 			//obs: null, // [K] observation parameters {weights:[...], dims:[....]}
-			emP: null,
 			
 			// supervised learning parms			
 			batch: 0, 				// batch size in steps before next estimate
@@ -329,7 +328,6 @@ class RAN {
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
 			ctmode = this.ctmode,
-			//solve = this.solve || {},
 			WU = this.WU = this.wiener ? $(N) : [],
 			WQ = this.WQ = this.wiener ? $(N) : [];
 		
@@ -441,7 +439,7 @@ class RAN {
 
 		U.use( (n) => U1[n] = U[n] );  // hold states to update the N1 counters
 		
-		if (evs) { // in learning mode 
+		if (evs) { // in learning mode (assume events are time ordered)
 			if ( !s ) { // initialize states at t=0
 				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
@@ -520,7 +518,6 @@ class RAN {
 	start ( ) {	  // start process in supervised learning (reverse) or unsupervised generative (forward) mode
 		var 
 			ran = this,
-			//solve = this.solve || {},
 			U = this.U,
 			//Y = this.Y,
 			batch = this.batch;
@@ -1310,12 +1307,6 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 			
 			batch: 50,  // supervised learning every 50 steps
 			
-			/*solve:  {
-				lma: [50]  // unsuervised learning method to learn coherence intervals
-				// bfs: [5,200,5]
-				// lfa: [50]
-			},*/
-			
 			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
@@ -1358,13 +1349,6 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 
 			batch: 50,  // supervised learning every 50 steps
 			
-			/*solve:  {
-				use: "lma",
-				lma: [50]
-				// bfs: [5,200,5]
-				// lfa: [50]
-			},*/
-			
 			N: 1000,
 			nyquist: 1,
 			steps: 800
@@ -1388,12 +1372,6 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 
 			batch: 50,  // supervised learning every 50 steps
 
-			/*solve:  {
-				lma: [50]
-				// bfs: [5,200,5]
-				// lfa: [50]
-			},*/
-			
 			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
