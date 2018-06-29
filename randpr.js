@@ -28,6 +28,7 @@ class RAN {
 			N: 1, 		// ensemble size
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
 			states: null, 	// state indecies K || ["state", ...] || {state: index, ...} defaults to [0, 1, ...]
+			corrMap: null,   // map state index to correlation value [value, ... ]
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
 			nyquist: 1, // nyquist oversampling rate = 1/dt
@@ -39,8 +40,8 @@ class RAN {
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
 			// K-state config parameters
-			trP: null, 	// [KxK] from-to state trans probs
-			emP: null, // {mu,sigma,dims} emmision probs
+			trP: null, 	// [KxK] from-to state trans probs or { states:K, index: { index: prob, ...}, ...}
+			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
 
 			// K=2 state config parameters
 			alpha: 0,  // on-to-off rate [jumps/s]
@@ -303,26 +304,30 @@ class RAN {
 				break;
 				
 			default:
-				K = this.K = states;
-				states = this.states = {};
-			
-				if (K % 2) {
-					states[0] = 0;
-					for (var a=1, k=1; k<K; a++) {
-						states[k++] = a; 
-						states[k++] = -a;
-					}
-				}
+				for (var syms = {}, k=0, K=states; k<K; k++) syms[ k ] = k;
+				this.K = K;
+				states = this.states = syms;
+		}
 
-				else			
-					for (var a=1, k=0; k<K; a++) {
-						states[k++] = a; 
-						states[k++] = -a;
-					}
+		var map = this.corrMap = new Array(K);
+		
+		if (K % 2) {
+			map[0] = 0;
+			for (var a=1, k=1; k<K; a++) {
+				map[k++] = a; 
+				map[k++] = -a;
+			}
+		}
+
+		else			
+			for (var a=1, k=0; k<K; a++) {
+				map[k++] = a; 
+				map[k++] = -a;
+			}
 
 		}
 
-		Log("states",states);	
+		Log("states",states, map);	
 
 		// allocate the ensemble
 		var 
@@ -591,22 +596,15 @@ class RAN {
 		this.samples += this.N;
 				
 		var 
-			K = this.K, states = this.states, cor = 0, corP = this.corP, p, N0 = this.N0, NS = this.samples;
+			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, samples = this.samples;
 
-		/*
-		states.use( (fr) => {
-			states.use( (to) => {
-				p = corP[fr][to] = N0[fr][to] / NS;
-				cor += states[fr] * states[to] * p;
+		map.use( (fr) => {
+			map.use( (to) => {
+				p = corP[fr][to] = N0[fr][to] / samples;
+				cor += map[fr] * map[to] * p;
 			});
-		});*/
+		});
 
-		for (var fr in states)
-			for (var to in states) {
-				p = corP[fr][to] = N0[fr][to] / NS;
-				cor += states[fr] * states[to] * p;
-			}
-		
 		return cor ; 
 	}
 
