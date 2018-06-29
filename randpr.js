@@ -27,7 +27,7 @@ class RAN {
 
 			N: 1, 		// ensemble size
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
-			states: null, 	// state indecies K || ["state", ...] || {state: index, ...} defaults to [0, 1, ...]
+			symbols: null, 	// state indecies K || ["state", ...] || {state: index, ...} defaults to [0, 1, ...]
 			corrMap: null,   // map state index to correlation value [value, ... ]
 			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
@@ -64,8 +64,7 @@ class RAN {
 			},
 
 			// internal variables
-			K: 0, 		// number of states (state = [0:K-1], symbol = states[state])
-			//Y: null, 	// [N] observation at time t
+			K: 0, 		// number of states
 			U: null,    // [N] states at time t
 			U0: null, 	// [N] initial states at time t = 0
 			U1: null, 	// [N] state buffer 
@@ -87,7 +86,6 @@ class RAN {
 			cumN: null, 	// [KxK] cummulative number of from-to jumps
 			eqP: null, 	// [K] equilibrium state probabilities 
 			A: null,	// [KxK] jump rates
-			//obs: null, // [K] observation parameters {weights:[...], dims:[....]}
 			
 			// supervised learning parms			
 			batch: 0, 				// batch size in steps before next estimate
@@ -112,7 +110,7 @@ class RAN {
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
-			states = this.states;  // state symbols
+			symbols = this.symbols;  // state symbols
 
 		if ( this.p ) {   // two-state process via p,Tc
 			var
@@ -143,9 +141,8 @@ class RAN {
 		if ( emP ) {
 			if (dims = emP.dims) {
 				var 
-					Kstates = 1,
-					drop = dims.use( (n,Dims) => Kstates *= Dims[n] ),
-					K = this.K = Kstates,
+					K = 1,
+					drop = dims.use( (n,Dims) => K *= Dims[n] ),
 					weights = emP.weights,
 					D = dims.length,
 					grid = emP.grid = perms( [], dims, []),  // state grid	
@@ -175,7 +172,9 @@ class RAN {
 						sigmas.push( sigma );
 						
 						Gen[k] = MVN( mu, sigma ).sample;
-					});					
+					});
+				
+				this.K = K;
 			}
 			
 			else {
@@ -187,51 +186,9 @@ class RAN {
 			}
 		}
 
-		/*
-		if ( obs ) {
-			var	
-				dims = obs.dims || [2,2],
-				states = 1,
-				drop = dims.use( (n,D) => states *= D[n] ),
-				K = this.K = states,
-				weights = obs.weights,
-				D = dims.length,
-				grid = obs.grid = perms( [], dims, []),  // state grid	
-				mus = obs.mu = [],
-				sigmas = obs.sigma = [],
-				emP = obs.emP = $(K, function (k,gen) { // gauss mixing (mu,sigma) parms 
-					var 
-						n = 0,
-
-						mu = $(D, (i,mu) =>
-							mu[i] = grid[k][n++] + 0.5 + (random() - 0.5)*weights[i]
-						),
-
-						L = $$(D,D, (i,j, L) => 	// lower trianular matrixfs with real, positive diagonal
-							L[i][j] = (i <= j ) ? random() : 0
-						), 
-
-						sigma = $$(D,D, function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
-							var dot = 0;
-							L.use( function (n) {
-								dot += L[i][n] * L[j][n];
-							});
-							A[i][j] = dot * weights[i] * weights[j]
-						});
-					
-					mus.push( mu );
-					sigmas.push( sigma );
-
-					gen[k] = MVN( mu, sigma );
-				});
-
-			//Log(obs.mu, obs.sigma);
-		}
-		*/
-		
 		switch ( trP.constructor.name ) {
 			case "String":
-				var K = this.K = states || 2;
+				var K = this.K = symbols.length || 2;
 				switch (trP) {
 					case "random":
 						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
@@ -288,25 +245,25 @@ class RAN {
 		
 		Log(K, trP, N);
 		
-		states = states || K || 2;
+		if (!symbols) symbols = K;
 		
-		switch ( states.constructor.name ) {
+		switch ( symbols.constructor.name ) {
 			case "Object":
 				K = 0;
-				for (var key in states) K++;
+				for (var key in symbols) K++;
 				this.K = K;
 				break;
 				
 			case "Array":
-				for (var syms = {}, k=0, K=states.length; k<K; k++) syms[ states[k] ] = k;
+				for (var syms = {}, k=0, K=symbols.length; k<K; k++) syms[ symbols[k] ] = k;
 				this.K = K;
-				states = this.states = syms;
+				symbols = this.symbols = syms;
 				break;
 				
 			default:
-				for (var syms = {}, k=0, K=states; k<K; k++) syms[ k ] = k;
+				for (var syms = {}, k=0, K=symbols; k<K; k++) syms[ k ] = k;
 				this.K = K;
-				states = this.states = syms;
+				symbols = this.symbols = syms;
 		}
 
 		var map = this.corrMap = new Array(K);
@@ -325,15 +282,12 @@ class RAN {
 				map[k++] = -a;
 			}
 
-		}
-
-		Log("states",states, map);	
+		Log("init", K, symbols, map);	
 
 		// allocate the ensemble
 		var 
 			U1 = this.U1 = $(N),
 			J = this.J = $(N, $zero),
-			//Y = this.Y = $(N),
 			N1 = this.N1 = $$(K,K,$$zero),	
 			mleA = this.mleA = $$(K,K,$$zero), 
 			cumH = this.cumH = $$(K,K,$$zero),
@@ -380,8 +334,6 @@ class RAN {
 						var fr = U0[n] = U[n] = 0;
 						HT[n] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 					}
-					
-					//Y[ n ] = obs ? obs.emP[0].sample() : null; 					
 				});
 			}
 
@@ -390,7 +342,6 @@ class RAN {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					HT[ n ] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
-					//Y[ n ] = obs ? obs.emP[0].sample() : null; 				
 				}); 
 		}
 		
@@ -449,14 +400,10 @@ class RAN {
 			ran = this,
 			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
-			// Y=this.Y, obs=this.obs,
-			states=this.states, keys = this.keys,
+			symbols=this.symbols, keys = this.keys,
 			emP = this.emP,
 			J=this.J,
 			t = this.t, s = this.s, N = this.N;
-		
-		//Log(">>",s,ran.gamma);		
-		//Log(">>","K=",K, "trP=", this.trP);
 		
 		ran.gamma[s] = ran.statCorr();
 
@@ -467,8 +414,7 @@ class RAN {
 				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
 					var n = ev.n;		// ensemble index
-					U[ n ] = states[ev[keys.u]] || 0;  // state (0 if unsupervised)
-					//Y[ n ] = [ev.x, ev.y, ev.z];  // observations (null if unsupervised)
+					U[ n ] = symbols[ev[keys.u]] || 0;  // state (0 if unsupervised)
 				});
 				U.use( (n) => {
 					U0[n] = U1[n] = U[n];		// initialize states
@@ -481,7 +427,7 @@ class RAN {
 				var 
 					n = ev.n,  // ensemble index = unique event id
 					fr = U[n],   // current state of member (0 when unsupervised)
-					to = states[ev[keys.u]];	// event state (if supervised) or undefined (if unsupervised)
+					to = symbols[ev[keys.u]];	// event state (if supervised) or undefined (if unsupervised)
 				
 				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
 				cumN[fr][to] ++;  	// total number of from-to jumps
@@ -489,7 +435,6 @@ class RAN {
 				J[ n ]++; 		// increment jump counter
 				U[ n ] = to || 0;  		// force state = 0 if unsupervised
 				HT[ n ] = t;			// hold current time
-				//Y[ n ] = [ev.x, ev.y, ev.z];  // save observations if any
 			});
 		}
 
@@ -506,7 +451,6 @@ class RAN {
 						
 						//ran.onJump(n,to,hold, obs ? obs.emP[to].sample() : null ); 	// callback with jump info
 						ran.onJump(n,to,hold, emP ? emP.gen[to]() : null ); 	// callback with jump info
-						//Log(">>>",n,to,Y[n],obs);
 					});
 			});	
 				
@@ -542,7 +486,6 @@ class RAN {
 		var 
 			ran = this,
 			U = this.U,
-			//Y = this.Y,
 			batch = this.batch;
 
 		if ( ran.learn && !ran.halt )  // supervised learning mode
@@ -565,8 +508,6 @@ class RAN {
 						F: ran.F,	// event count frequencies
 						J: ran.J,		// ensemble jump counts
 						N: ran.N		// ensemble size
-						//U: ran.U,		// ensemble states
-						//Y: ran.Y		// ensemble observation(s)
 					});
 				}
 
