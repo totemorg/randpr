@@ -35,7 +35,7 @@ class RAN {
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			obslist: [], // observation save list
-			keys: {x:"x", y:"y", z:"z", u:"u", t:"t"},  // event key for state symbol
+			keys: { index:"index", state:"state" },  // event key for state symbol
 			
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
@@ -110,7 +110,7 @@ class RAN {
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
-			symbols = this.symbols;  // state symbols
+			symbols = this.symbols || 2;  // state symbols
 
 		if ( this.p ) {   // two-state process via p,Tc
 			var
@@ -186,9 +186,30 @@ class RAN {
 			}
 		}
 
+		//if (!symbols) symbols = K;
+		
+		switch ( symbols.constructor.name ) {
+			case "Object":
+				K = 0;
+				for (var key in symbols) K++;
+				this.K = K;
+				break;
+				
+			case "Array":
+				for (var syms = {}, k=0, K=symbols.length; k<K; k++) syms[ symbols[k] ] = k;
+				this.K = K;
+				symbols = this.symbols = syms;
+				break;
+				
+			default:
+				for (var syms = {}, k=0, K=symbols; k<K; k++) syms[ k ] = k;
+				this.K = K;
+				symbols = this.symbols = syms;
+		}
+
 		switch ( trP.constructor.name ) {
 			case "String":
-				var K = this.K = symbols.length || 2;
+				var K = this.K = symbols.length;
 				switch (trP) {
 					case "random":
 						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
@@ -214,11 +235,11 @@ class RAN {
 
 			case "Object":
 				var
-					K = this.K = trP.states || 2,
+					//K = this.K = symbols.length,
 					P = $$(K, K, $$zero),
 					dims = emP ? emP.dims : [K];
 
-				delete trP.states;
+				//delete trP.states;
 				for (var frKey in trP) {
 					var 
 						frP = trP[frKey],
@@ -234,7 +255,7 @@ class RAN {
 
 				balanceProbs(P);
 				trP = this.trP = P;
-				Log("trP", trP);
+				//Log("trP", trP);
 				break;
 		}
 		
@@ -243,29 +264,9 @@ class RAN {
 			ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
 			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k]	);  // equlib state probs
 		
-		Log(K, trP, N);
+		//Log(K, trP, N);
 		
-		if (!symbols) symbols = K;
-		
-		switch ( symbols.constructor.name ) {
-			case "Object":
-				K = 0;
-				for (var key in symbols) K++;
-				this.K = K;
-				break;
-				
-			case "Array":
-				for (var syms = {}, k=0, K=symbols.length; k<K; k++) syms[ symbols[k] ] = k;
-				this.K = K;
-				symbols = this.symbols = syms;
-				break;
-				
-			default:
-				for (var syms = {}, k=0, K=symbols; k<K; k++) syms[ k ] = k;
-				this.K = K;
-				symbols = this.symbols = syms;
-		}
-
+		// create zero-mean correlation map
 		var map = this.corrMap = new Array(K);
 		
 		if (K % 2) {
@@ -282,7 +283,12 @@ class RAN {
 				map[k++] = -a;
 			}
 
-		Log("init", K, symbols, map);	
+		Log("init", {
+			states: K, 
+			syms: symbols, 
+			xMap: map,
+			trProbs: trP
+		});	
 
 		// allocate the ensemble
 		var 
@@ -413,8 +419,8 @@ class RAN {
 			if ( !s ) { // initialize states at t=0
 				ran.gamma[0] = 1;  // force
 				evs.each( function (i, ev) {
-					var n = ev.n;		// ensemble index
-					U[ n ] = symbols[ev[keys.u]] || 0;  // state (0 if unsupervised)
+					var n = ev[keys.index];		// ensemble index
+					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if unsupervised)
 				});
 				U.use( (n) => {
 					U0[n] = U1[n] = U[n];		// initialize states
@@ -425,9 +431,9 @@ class RAN {
 			t = this.t = this.s = evs[0].t;			
 			evs.each( function (n,ev) {   // assume events have been time-ordered 
 				var 
-					n = ev.n,  // ensemble index = unique event id
+					n = ev[keys.index],  // ensemble index = unique event id
 					fr = U[n],   // current state of member (0 when unsupervised)
-					to = symbols[ev[keys.u]];	// event state (if supervised) or undefined (if unsupervised)
+					to = symbols[ev[keys.state]];	// event state (if supervised) or undefined (if unsupervised)
 				
 				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
 				cumN[fr][to] ++;  	// total number of from-to jumps
@@ -435,6 +441,8 @@ class RAN {
 				J[ n ]++; 		// increment jump counter
 				U[ n ] = to || 0;  		// force state = 0 if unsupervised
 				HT[ n ] = t;			// hold current time
+				
+				ran.onEvent(n,to,0, [ev[keys.x], ev[keys.y], ev[keys.z]] ); 	// callback with jump info
 			});
 		}
 
@@ -449,8 +457,8 @@ class RAN {
 						U[ n ] = to;  			// set new state
 						HT[ n ] = t + hold;    // advance to next jump time: hold = 0 / exptime in discrete / continious time mode
 						
-						//ran.onJump(n,to,hold, obs ? obs.emP[to].sample() : null ); 	// callback with jump info
-						ran.onJump(n,to,hold, emP ? emP.gen[to]() : null ); 	// callback with jump info
+						//ran.onEvent(n,to,hold, obs ? obs.emP[to].sample() : null ); 	// callback with jump info
+						ran.onEvent(n,to,hold, emP ? emP.gen[to]() : null ); 	// callback with jump info
 					});
 			});	
 				
@@ -517,7 +525,7 @@ class RAN {
 		
 		else { // unsupervised generative mode
 			//Log("start gen", ran.steps, ran.N);
-			//U.use( (n) => ran.onJump (n,U[n],0,Y[n]) );
+			//U.use( (n) => ran.onEvent (n,U[n],0,Y[n]) );
 			
 			ran.step();
 			if ( batch ) ran.onBatch();
@@ -561,7 +569,7 @@ class RAN {
 		this.filter(this.store, ev);
 	}
 	
-	onBatch () {    // MLE jump rates and trans probs
+	onBatch () {    // record MLE jump rates and trans probs
 		var 
 			ran = this,
 			K = this.K,
@@ -588,6 +596,7 @@ class RAN {
 			Nfr.sum( (sum) => {
 				Afr.use( (to) => {
 					Afr[to] = Nfr[to] / sum;
+					//Log(fr,to,Nfr[to], sum);
 				});
 			});
 		});
@@ -606,12 +615,12 @@ class RAN {
 			at:"batch",t: this.t-this.dt, s: this.s-1,
 			rel_error: err,
 			mle_em_events: obslist.length,
-			mle_tr_prob: mleA,
+			mle_tr_probs: mleA,
 			stat_corr: this.gamma[ this.s-1 ]
 		});		
 	}
 
-	onError( msg ) {
+	onError( msg ) {	// record process error condition
 		Trace(msg);
 		this.record({ 
 			at: "error", t: this.t, s: this.s, 
@@ -619,17 +628,17 @@ class RAN {
 		});
 	}
 	
-	onJump (idx,state,hold,obs) {  // null to disable
+	onEvent (index,state,hold,obs) {  // record process event info
 		
-		if (this.batch) this.obslist.push( obs );
+		if (obs) this.obslist.push( obs );  // retain for training Viterbi emission probs
 		
 		this.record({
 			at:"jump",t: this.t, s: this.s,
-			idx: idx, state:state, hold:hold, obs:obs
+			index: index, state:state, hold:hold, obs:obs
 		});
 	}
 
-	onStep () {		// null to disable
+	onStep () {		// record process step info
 		this.record({
 			at:"step", t:this.t, s:this.s, 
 			gamma:this.gamma[this.s],
@@ -637,7 +646,7 @@ class RAN {
 		});
 	}
 
-	onConfig() {
+	onConfig() {  // record process config info
 		var
 			//obs = this.obs,		
 			trP = this.trP,
@@ -673,7 +682,9 @@ class RAN {
 		});
 	}
 	
-	onEnd() {
+	onEnd() {  // record process termination info
+		
+		Log("onend", this.obslist.length);
 		
 		var 
 			ran = this,
@@ -699,8 +710,8 @@ class RAN {
 				? {
 					mle_holding_times: ran.Rmle,
 					rel_error: ran.err,
-					mle_em_prob: ran.mleB,
-					mle_tr_prob: ran.mleA,
+					mle_em_probs: ran.mleB,
+					mle_tr_probs: ran.mleA,
 					trans_counts: ran.N1,
 					mean_count: Kbar, 
 					coherence_time: Tc, 
@@ -1113,13 +1124,14 @@ MRT det= 0.09375
 		
 	case "R2.1":  // config methods
 		var ran = new RAN({
-			//trP: [[0.1, 0.9], [0.1, 0.9]]
+			trP: [[0.1, 0.9], [0.1, 0.9]]
 /*
 MRT det= 0.09999999999999998
 2 [ [ 0.1, 0.9 ], [ 0.1, 0.9 ] ] 1
 states [ 1, -1 ]
 */
-			trP: { states:3, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
+			//symbols: 3,
+			//trP: { 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
 /*
 trP [ [ 0.09999999999999998, 0.8, 0.1 ],
   [ 0.1, 0.9, 0 ],
@@ -1146,7 +1158,8 @@ states [ 0, 1, -1 ]
 				dims: [3,3],
 				weights: [1,1]
 			},
-			trP: { states:9, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
+			symbols: 9,
+			trP: { 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
 		});
 /*
 trP [ [ 0.09999999999999998, 0.8, 0.1, 0, 0, 0, 0, 0, 0 ],
