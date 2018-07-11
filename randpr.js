@@ -34,7 +34,7 @@ class RAN {
 			nyquist: 1, // nyquist oversampling rate = 1/dt
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
-			obslist: [], // observation save list
+			obslist: null, // observation save list
 			keys: { index:"index", state:"state" },  // event key for state symbol
 			
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
@@ -139,6 +139,7 @@ class RAN {
 		}
 
 		if ( emP ) {
+			this.obslist = [];
 			if (dims = emP.dims) {
 				var 
 					K = 1,
@@ -614,7 +615,7 @@ class RAN {
 		this.record({
 			at:"batch",t: this.t-this.dt, s: this.s-1,
 			rel_error: err,
-			mle_em_events: obslist.length,
+			mle_em_events: obslist ? obslist.length : 0,
 			mle_tr_probs: mleA,
 			stat_corr: this.gamma[ this.s-1 ]
 		});		
@@ -630,7 +631,9 @@ class RAN {
 	
 	onEvent (index,state,hold,obs) {  // record process event info
 		
-		if (obs) this.obslist.push( obs );  // retain for training Viterbi emission probs
+		var obslist = this.obslist;
+		
+		if (obslist) obslist.push( obs );  // retain for training Viterbi emission probs
 		
 		this.record({
 			at:"jump",t: this.t, s: this.s,
@@ -684,7 +687,7 @@ class RAN {
 	
 	onEnd() {  // record process termination info
 		
-		Log("onend", this.obslist.length);
+		//Log("onend", this.obslist.length);
 		
 		var 
 			ran = this,
@@ -698,7 +701,7 @@ class RAN {
 			F = ran.F = $( J.max()+1, $zero ),  // count frequencies
 			obslist = this.obslist,		
 			K = this.K,
-			mleB = this.mleB = obslist.length ? EM( obslist, K) : null;
+			mleB = this.mleB = obslist ? EM( obslist, K) : null;
 
 		J.use( (n) =>F[ J[n] ]++ ); // count frequencies across the ensemble
 
