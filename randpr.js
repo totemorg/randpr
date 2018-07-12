@@ -388,6 +388,9 @@ class RAN {
 				break;
 		}
 
+		Log("keys", this.keys);
+		if ( !this.keys ) this.keys = { index:"index", state:"state" };
+			
 		// get new state by taking a random jump according to cummulative P[fr,to]
 			
 		for (var Pfr = cumP[fr], u=random(), to=0; to < K && Pfr[to] <= u; to++) ;
