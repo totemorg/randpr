@@ -107,7 +107,7 @@ class RAN {
 			N = this.N, // ensemble size
 			trP = this.trP, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
-			keys = this.keys, // event keys
+			keys = this.keys = Copy(this.keys || {}, { index:"index", state:"state", x:"x", y:"y", z:"z", t:"t" }), // event keys
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
@@ -285,9 +285,7 @@ class RAN {
 				map[k++] = -a;
 			}
 
-		if ( !keys ) keys = this.keys = { index:"index", state:"state", x:"x", y:"y", z:"z", t:"t" };
-					
-		Log("init", {
+		Log("R>", {
 			keys: keys,
 			states: K, 
 			syms: symbols, 
