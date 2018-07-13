@@ -35,7 +35,7 @@ class RAN {
 			steps: 1, // number of process steps of size dt
 			ctmode: false, 	// true=continuous, false=discrete time mode 
 			obslist: null, // observation save list
-			keys: { index:"index", state:"state" },  // event key for state symbol
+			keys: null,  // event key names
 			
 			learn: null, 	// event getter and poster during supervised/unsupervised learning
 						
@@ -107,6 +107,7 @@ class RAN {
 			N = this.N, // ensemble size
 			trP = this.trP, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
+			keys = this.keys, // event keys
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
@@ -284,7 +285,10 @@ class RAN {
 				map[k++] = -a;
 			}
 
+		if ( !keys ) keys = this.keys = { index:"index", state:"state", x:"x", y:"y", z:"z", t:"t" };
+					
 		Log("init", {
+			keys: keys,
 			states: K, 
 			syms: symbols, 
 			xMap: map,
@@ -388,9 +392,6 @@ class RAN {
 				break;
 		}
 
-		Log("keys", this.keys);
-		if ( !this.keys ) this.keys = { index:"index", state:"state" };
-			
 		// get new state by taking a random jump according to cummulative P[fr,to]
 			
 		for (var Pfr = cumP[fr], u=random(), to=0; to < K && Pfr[to] <= u; to++) ;
