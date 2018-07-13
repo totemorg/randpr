@@ -2,9 +2,9 @@
 
 'use strict';
 /**
-@@requires stream
-@@requires enum
-@@requires jslab
+@class RAN
+@requires stream
+@requires jslab
 
 refs:
 www.statslab.cam.ac.uk/~rrw1
@@ -14,7 +14,11 @@ www.stat.berkeley.edu/~pitman
 www.math.dartmouth.edu/~pw
 **/
 
-var			// nodejs modules
+var			
+	// globals
+	TRACE = "R>",
+
+	// nodejs modules
 	STREAM = require("stream");			// data streams
 
 const { $, $$, EM, MVN, ME, Copy, Each, Log } = require("jslab").libs;
@@ -285,7 +289,7 @@ class RAN {
 				map[k++] = -a;
 			}
 
-		Log("R>", {
+		Log(TRACE, {
 			keys: keys,
 			states: K, 
 			syms: symbols, 
@@ -866,7 +870,7 @@ function delta(fr,to) {
 }
 
 function Trace(msg,sql) {
-	msg.trace("R>",sql);
+	TRACE.trace(msg,sql);
 }
 
 function firstAbsorb(P) {  //< compute first absorption times, probs and states
