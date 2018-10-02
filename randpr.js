@@ -111,7 +111,7 @@ class RAN {
 			N = this.N, // ensemble size
 			trP = this.trP, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
-			keys = this.keys = Copy(this.keys || {}, { index:"index", state:"state", x:"x", y:"y", z:"z", t:"t" }), // event keys
+			keys = this.keys = Copy(this.keys || {}, { index:"n", state:"u", class:"k", x:"x", y:"y", z:"z", t:"t" }), // event keys
 			//obs = this.obs, // observation (aka emission or mixing) parms
 			nyquist = this.nyquist,	// upsampling rate
 			dt = this.dt = 1/nyquist,	// step time
@@ -314,6 +314,12 @@ class RAN {
 			p = 1/K,
 			Np = p * N,
 			N0 = this.N0 = $$(K,K, (fr,to,N0) => N0[fr][to] = delta(fr,to) ? Np : 0 ),
+			/*
+			this.learn 
+				? $$(K,K,$$zero)
+				: $$(K,K, (fr,to,N0) => N0[fr][to] = delta(fr,to) ? Np : 0 ),
+			*/
+			
 			HT = this.HT = $(N),
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
@@ -321,11 +327,11 @@ class RAN {
 			WU = this.WU = this.wiener ? $(N) : [],
 			WQ = this.WQ = this.wiener ? $(N) : [];
 		
-		this.t = this.s = this.samples = 0;  // initialize process counters
+		this.t = this.samples = 0;  // initialize process counters
 
 		// initialize ensemble
 		
-		if ( this.learn ) {  // in learning mode
+		if ( false ) { // this.learn ) {  // in learning mode
 			U.use( (n) => HT[n] = U0[n] = U[n] = 0 );
 		}
 		
@@ -358,6 +364,7 @@ class RAN {
 				}); 
 		}
 		
+		//Log("HT", HT);
 		if ( this.wiener ) {  //  initialilze wiener processes
 			this.NRV = MVN( [0], [[1]] );
 			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
@@ -413,40 +420,40 @@ class RAN {
 			ran = this,
 			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN,
-			symbols=this.symbols, keys = this.keys,
-			emP = this.emP,
-			J=this.J,
-			t = this.t, s = this.s, N = this.N;
+			symbols=this.symbols, keys = this.keys, emP = this.emP, J=this.J,
+			t = this.t, N = this.N;
 		
-		ran.gamma[s] = ran.statCorr();
+		ran.gamma[t] = t ? ran.statCorr() : 1;
 
 		U.use( (n) => U1[n] = U[n] );  // hold states to update the N1 counters
 		
-		if (evs) { // in learning mode (assume events are time ordered)
-			if ( !s ) { // initialize states at t=0
+		if (evs) { // in learning mode with time-ordered events
+			/*
+			if ( !t ) { // initialize states at t=0
 				ran.gamma[0] = 1;  // force
-				evs.each( function (i, ev) {
+				evs.forEach( (ev) => {
 					var n = ev[keys.index];		// ensemble index
-					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if unsupervised)
+					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
 				});
 				U.use( (n) => {
 					U0[n] = U1[n] = U[n];		// initialize states
 					J[n] = -1;  // force initial jump counter to 0
-				});
-			} 
+				}); 
+			} */
 				
-			t = this.t = this.s = evs[0].t;	
-			evs.each( function (n,ev) {   // assume events have been time-ordered 
+			t = this.t = evs[0].t;	
+			//Log("t",t);
+			evs.forEach( (ev) => {   // assume events are time-ordered 
 				var 
 					n = ev[keys.index],  // ensemble index = unique event id
-					fr = U[n],   // current state of member (0 when unsupervised)
-					to = symbols[ev[keys.state]];	// event state (if supervised) or undefined (if unsupervised)
+					fr = U[n],   // current state of member (0 if hidden)
+					to = symbols[ev[keys.state]];	// event state (if supervised) or undefined (if hidden)
 				
 				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
 				cumN[fr][to] ++;  	// total number of from-to jumps
 
 				J[ n ]++; 		// increment jump counter
-				U[ n ] = to || 0;  		// force state = 0 if unsupervised
+				U[ n ] = to || 0;  		// update state (0 if hidden)
 				HT[ n ] = t;			// hold current time
 				
 				ran.onEvent(n,to,0, [ev[keys.x], ev[keys.y], ev[keys.z]] ); 	// callback with jump info
@@ -455,10 +462,10 @@ class RAN {
 
 		else  // generative mode
 			U.use( (n) => {
-				var held = t - HT[n];  // HT[n] = 0 (so held>0) in discrete time mode 
-				//Log(">>",n,held);
+				var held = t - HT[n];  // HT[n] = 0 in discrete time mode to force held > 0
+				//if (t <=1) Log(">>",t,n,HT[n],held);
 				
-				if ( held > 0 )    // holding time exceeded so *consider* jump to new state
+				if ( held > 0 || !t )    // holding time exceeded so *consider* jump to new state
 					ran.jump( U[n], held, function (fr, to, hold) {  // get new to-state and its holding time
 						J[ n ]++; 		// increment jump counter
 						U[ n ] = to;  			// set new state
@@ -472,12 +479,13 @@ class RAN {
 		//Log(t,U.join(""));
 		
 		//if (t<50) Log( t<10 ? "0"+t : t,U,J);		
-		
-		U.use( (n) => {   // adjust initial-to transition counters for computing correlations
+
+		if (t<5) Log(t,N0);
+		U.use( (n) => {   // adjust initial from-to counters for computing ensemble correlations
 			N0[ U0[n] ][ U[n] ]++; 
 		});
 
-		U.use( (n) => {  // adjust 1-step transition counters for computing trans probs
+		U.use( (n) => {  // adjust step from-to counters for computing trans probs
 			N1[ U1[n] ][ U[n] ]++;
 		});
 
@@ -496,16 +504,16 @@ class RAN {
 		}
 		
 		ran.onStep();
-		ran.t += ran.dt; ran.s++;
+		ran.t++;
 	}
 	
-	start ( ) {	  // start process in supervised learning (reverse) or unsupervised generative (forward) mode
+	start ( ) {	  // start process in learning (reverse) or generative (forward) mode
 		var 
 			ran = this,
 			U = this.U,
 			batch = this.batch;
 
-		if ( ran.learn && !ran.halt )  // supervised learning mode
+		if ( ran.learn && !ran.halt )  // learning mode
 			ran.learn( function supervisor(evs, cb) {  // process events when evs, or terminate with callback(results) when evs exhausted
 
 				if (evs) {
@@ -514,7 +522,7 @@ class RAN {
 				}
 
 				else {
-					//Log("HALTING", ran.t, ran.s, ran.steps);
+					//Log("HALTING", ran.t, ran.steps);
 					ran.halt = true;
 					ran.onEnd();
 					if (cb)
@@ -530,19 +538,19 @@ class RAN {
 				}
 
 				if ( batch )
-					if ( ran.s % batch == 0 ) ran.onBatch();
+					if ( ran.t % batch == 1 ) ran.onBatch();
 			});
 		
-		else { // unsupervised generative mode
+		else { // generative mode
 			//Log("start gen", ran.steps, ran.N);
 			//U.use( (n) => ran.onEvent (n,U[n],0,Y[n]) );
 			
 			ran.step();
 			if ( batch ) ran.onBatch();
-			while (ran.s < ran.steps) {  // advance process to end
+			while (ran.t < ran.steps) {  // advance process to end
 				ran.step(); 
 				if ( batch )
-					if ( ran.s % batch == 0 ) ran.onBatch();
+					if ( ran.t % batch == 1 ) ran.onBatch();
 			}
 			
 			ran.onEnd();
@@ -552,10 +560,8 @@ class RAN {
 	
 	statCorr ( ) {  // statistical correlation function
 		
-		this.samples += this.N;
-				
 		var 
-			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, samples = this.samples;
+			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, N = this.N, samples = this.samples += N;
 
 		map.use( (fr) => {
 			map.use( (to) => {
@@ -569,10 +575,10 @@ class RAN {
 
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
 		var abs = Math.abs;
-		for (var s=0, S = this.s, Tc = 0; s<S; s++) Tc += abs(this.gamma[s]) * (1 - s/S);
+		for (var t=0, T = this.t, Tc = 0; t<T; t++) Tc += abs(this.gamma[t]) * (1 - t/T);
 		
-		return this.Tc = Tc * this.dt / this.gamma[0] / 2;
-		//Log("Tc=", Tc);
+		return this.Tc = Tc / this.gamma[0] / 2;
+		Log(">>>>>>>>>Tc=", Tc);
 	}
 	
 	record (ev) {  // record event ev to store or stream
@@ -584,7 +590,7 @@ class RAN {
 			ran = this,
 			K = this.K,
 			Kbar = this.J.avg(),
-			T = this.t,
+			T = this.t - 1,
 			cumH = this.cumH, 
 			cumN = this.cumN,
 			RT = this.RT,
@@ -622,18 +628,18 @@ class RAN {
 		}); */
 		
 		this.record({
-			at:"batch",t: this.t-this.dt, s: this.s-1,
+			at:"batch",t: T, 
 			rel_error: err,
 			mle_em_events: obslist ? obslist.length : 0,
 			mle_tr_probs: mleA,
-			stat_corr: this.gamma[ this.s-1 ]
+			stat_corr: this.gamma[ T ]
 		});		
 	}
 
 	onError( msg ) {	// record process error condition
 		Trace(msg);
 		this.record({ 
-			at: "error", t: this.t, s: this.s, 
+			at: "error", t: this.t, 
 			error: msg
 		});
 	}
@@ -645,15 +651,15 @@ class RAN {
 		if (obslist) obslist.push( obs );  // retain for training Viterbi emission probs
 		
 		this.record({
-			at:"jump",t: this.t, s: this.s,
+			at:"jump",t: this.t, 
 			index: index, state:state, hold:hold, obs:obs
 		});
 	}
 
 	onStep () {		// record process step info
 		this.record({
-			at:"step", t:this.t, s:this.s, 
-			gamma:this.gamma[this.s],
+			at:"step", t:this.t, 
+			gamma:this.gamma[this.t],
 			walk: this.wiener ? this.WU : []
 		});
 	}
@@ -669,7 +675,7 @@ class RAN {
 			ab = this.ab = firstAbsorb(trP);			
 		
 		this.record({
-			at: "config", t: this.t, s: this.s,
+			at: "config", t: this.t, 
 			states: this.K,
 			ensemble_size: this.N,		
 			sample_time: this.dt,
@@ -717,31 +723,29 @@ class RAN {
 		//Log("onend J", J);
 		
 		ran.record({  // record supervised stats
-			at: "end", t: ran.t, s: ran.s,
-			stats: batch
-				? {
-					mle_holding_times: ran.Rmle,
-					rel_error: ran.err,
-					mle_em_probs: ran.mleB,
-					mle_tr_probs: ran.mleA,
-					tr_counts: ran.N1,
-					mean_count: Kbar, 
-					coherence_time: Tc, 
-					coherence_intervals: M,
-					correlation_0lag: ran.gamma[0],
-					mean_intensity: Kbar / T,
-					degeneracy_param: delta,
-					snr: sqrt( Kbar / (1 + delta ) )
-				}
-				: { }
+			at: "end", t: ran.t, 
+			stats: {
+				mle_holding_times: ran.Rmle,
+				rel_error: ran.err,
+				mle_em_probs: ran.mleB,
+				mle_tr_probs: ran.mleA,
+				tr_counts: ran.N1,
+				mean_count: Kbar, 
+				coherence_time: Tc, 
+				coherence_intervals: M,
+				correlation_0lag: ran.gamma[0],
+				mean_intensity: Kbar / T,
+				degeneracy_param: delta,
+				snr: sqrt( Kbar / (1 + delta ) )
+			}
 		});
 	}
 
 	end(stats, saveStore) {  // terminate process
 		var ran = this;
 		
-		ran.record({  // post unsupervised learning stats
-			at: "end", t:ran.t, s: ran.s, 
+		ran.record({  // post learning stats
+			at: "end", t:ran.t, 
 			stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} 
 		});  
 		//Log("end store=", ran.store);
@@ -760,9 +764,9 @@ class RAN {
 			: new STREAM.Readable({  // prime and terminate the pipe
 				objectMode: true,
 				read: function () {  // prime or terminate the pipe
-					//Log("randpr pipe at", ran.s);
+					//Log("randpr pipe at", ran.t);
 
-					if ( ran.s < ran.steps ) 	// prime
+					if ( ran.t < ran.steps ) 	// prime
 						ran.start( );
 
 					else  { // terminate
@@ -1244,7 +1248,7 @@ states [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
 		});
 		break;
 		
-	case "R3":  // sync pipe with various textbook examples, custom filtering with supervised and unsupervised learning validation
+	case "R3":  // sync pipe with various textbook examples, custom filtering with supervised learning validation
 		var ran = new RAN({
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> eqP[k] = 1/K  eqpr)
 			//trP: [[.6, .4],[.4, .6]],
@@ -1304,7 +1308,7 @@ A [[0.11796427367711493,0.8820357263228851],[0.10001060084471994,0.8999893991552
 					case "end":
 						Log(ev);
 						var B = ev.stats.mle_em_prob;
-						B.each(function (n, b) {
+						B.forEach(function (b,n) {
 							Log("B"+n, JSON.stringify({mu: b.mu, sigma: b.sigma}));
 						});
 						
