@@ -637,7 +637,7 @@ class RAN {
 	}
 
 	onError( msg ) {	// record process error condition
-		Trace(msg);
+		Log(msg);
 		this.record({ 
 			at: "error", t: this.t, 
 			error: msg
@@ -757,7 +757,7 @@ class RAN {
 			ran = this,
 			sync = (typeof sinkStream) == "function";
 
-		Trace("PIPE " + (sync ? "sync" : "async") );
+		Trace( `PIPE${sync ? "sync" : "async"}` );
 		
 		ran.store = sync
 			? []
@@ -1421,7 +1421,7 @@ stats :
 
 				learn: function (supercb) {
 					getEvents(evs, true, (evs) => {
-						Trace( evs ? ` supervising ${evs.length} events` : " supervised" );
+						Log( evs ? ` supervising ${evs.length} events` : " supervised" );
 						
 						if (evs) // feed supervisor
 							supercb(evs);
