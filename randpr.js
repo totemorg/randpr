@@ -618,8 +618,9 @@ class RAN {
 		});
 		
 		var 
+			n = 0,
 			err = this.err = trP   // relative error between mle and actual trans probs
-				? ( mleA[0][0] - trP[0][0] ) / trP[K-1][K-1]
+				? abs( mleA[n][n] - trP[n][n] ) / trP[n][n]
 				: 0;
 			
 		/*
@@ -627,6 +628,7 @@ class RAN {
 			err[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - RT[fr][to] ) / RT[fr][to] ;
 		}); */
 		
+		//Log( T, mleA);
 		this.record({
 			at:"batch",t: T, 
 			rel_error: err,
