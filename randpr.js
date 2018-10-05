@@ -581,7 +581,9 @@ class RAN {
 		Log(">>>>>>>>>Tc=", Tc);
 	}
 	
-	record (ev) {  // record event ev to store or stream
+	record (at, ev) {  // record event ev labeled at to store or stream
+		ev.t = this.t;
+		ev.at = at;
 		this.filter(this.store, ev);
 	}
 	
@@ -629,8 +631,7 @@ class RAN {
 		}); */
 		
 		//Log( T, mleA);
-		this.record({
-			at:"batch",t: T, 
+		this.record("batch", {
 			rel_error: err,
 			mle_em_events: obslist ? obslist.length : 0,
 			mle_tr_probs: mleA,
@@ -640,8 +641,7 @@ class RAN {
 
 	onError( msg ) {	// record process error condition
 		Log(msg);
-		this.record({ 
-			at: "error", t: this.t, 
+		this.record("error", { 
 			error: msg
 		});
 	}
@@ -652,15 +652,13 @@ class RAN {
 		
 		if (obslist) obslist.push( obs );  // retain for training Viterbi emission probs
 		
-		this.record({
-			at:"jump",t: this.t, 
+		this.record("jump", {
 			index: index, state:state, hold:hold, obs:obs
 		});
 	}
 
 	onStep () {		// record process step info
-		this.record({
-			at:"step", t:this.t, 
+		this.record("step", {
 			gamma:this.gamma[this.t],
 			walk: this.wiener ? this.WU : []
 		});
@@ -676,8 +674,7 @@ class RAN {
 			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k] ),   // eq state probs
 			ab = this.ab = firstAbsorb(trP);			
 		
-		this.record({
-			at: "config", t: this.t, 
+		this.record("config", {
 			states: this.K,
 			ensemble_size: this.N,		
 			sample_time: this.dt,
@@ -724,8 +721,7 @@ class RAN {
 
 		//Log("onend J", J);
 		
-		ran.record({  // record supervised stats
-			at: "end", t: ran.t, 
+		this.record("end", {  // record supervised stats
 			stats: {
 				mle_holding_times: ran.Rmle,
 				rel_error: ran.err,
@@ -741,17 +737,18 @@ class RAN {
 				snr: sqrt( Kbar / (1 + delta ) )
 			}
 		});
+
+		if (evs = this.store)
+			evs.forEach( (ev) => {
+				ev.s = ev.t / Tc;
+			});
 	}
 
 	end(stats, saveStore) {  // terminate process
-		var ran = this;
-		
-		ran.record({  // post learning stats
-			at: "end", t:ran.t, 
+		this.record("end", {  // post learning stats
 			stats: stats ? Copy(stats,{}) : {error:"stats unavailable"} 
 		});  
-		//Log("end store=", ran.store);
-		if (saveStore) saveStore( ran.store );
+		if (saveStore) saveStore( this.store );
 	}
 	
 	pipe(sinkStream) {  // pipe events to a sinking stream or to a callback sinkStream(events)
