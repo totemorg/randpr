@@ -6,6 +6,8 @@
 @requires stream
 @requires jslab
 
+Generate or learn a random (Markov, Gauss, Bayes, Wiener, or Gillespie) process.
+
 refs:
 www.statslab.cam.ac.uk/~rrw1
 www.stat.yale.edu/~pollard
@@ -22,18 +24,29 @@ var
 	STREAM = require("stream");			// data streams
 
 const { $, $$, EM, MVN, ME, Copy, Each, Log, FLOW } = require("jslab").libs;
-const { sqrt, floor, random, cos, sin, abs, PI, log, exp, min, max} = Math;
+const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
 
 class RAN {
 	
 	constructor(opts, cb) {
 		Copy({  // default configuration
 
-			N: 1, 		// ensemble size
+			// transition parameters
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
-			symbols: null, 	// state indecies K || ["state", ...] || {state: index, ...} defaults to [0, 1, ...]
+			
+			markov: null, 	// [K^2] from-to state trans probs or { states:K, index: { index: prob, ...}, ...}
+				alpha: null,  // [K^2-K]/2 jump rates 
+				p: null,  // [K^2-K]/2 trans probs
+			
+			gauss: null, // (t) => state method
+			gillespie: 0, // number of states to reserve
+			bayes: null, // [K] eq state probs
+			
+			// ensemble parameters
+			
+			N: 1, 		// ensemble size
+			symbols: null, 	// state-index map = ["state1", ... "stateK"] || {state1: index, stateK: index} || K implies [0, 1, ... K]
 			corrMap: null,   // map state index to correlation value [value, ... ]
-			jumpModel: "",   // inhomogenous model (e.g. "gillespie" ) or "" for homogeneous model 
 			store: 	null,  // created by pipe()
 			steps: 1, // number of process steps of size dt 
 			ctmode: false, 	// true=continuous, false=discrete time mode 
@@ -41,16 +54,8 @@ class RAN {
 			keys: null,  // event key names
 			
 			learn: null, 	// sup/unsup learner(supercb) with callbacks supercb(evs) || supercb(null,onend)
-						
-			// K-state config parameters
-			trP: null, 	// [KxK] from-to state trans probs or { states:K, index: { index: prob, ...}, ...}
-			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
 
-			// K=2 state config parameters
-			alpha: 0,  // on-to-off rate [jumps/s]
-			beta: 0,  // off-to-on rate [jumps/s]
-			p: 0,  // on state probability
-			q: 0,  // off(not on) state probability
+			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
 
 			filter: function (str,ev) {  // filter output event ev to store/stream str
 			/**
@@ -76,19 +81,19 @@ class RAN {
 			WU: null, 		// [N] wiener/SFI ensemble
 			WQ: null, 		// [N] wiener/SFI ensemble for cummulative walks
 			
-			RT: null, 	// [KxK] from-to holding (mean recurrence) times
+			RT: null, 	// [K^2] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
 			abP: null,	// [K' x K-K'] absorption probabilities K' <= K
-			mleA: null, 	// [KxK] from-to state mle trans probabilities
+			mleA: null, 	// [K^2] from-to state mle trans probabilities
 			mleB: null, 	// {mu,sigma} observation mixing parameters
-			corP: null, 	// [KxK] stat correlation probabilities
-			cumP: null,	// [KxK] from-to cummulative state transition probabilities
-			N0: null, 	// [KxK] from-to cummulative counts in to-state given starting from-state
-			N1: null,	// [KxK] from-to state transition counts
-			cumH: null, 	// [KxK] cummulative time in from-to transition
-			cumN: null, 	// [KxK] cummulative number of from-to jumps
+			corP: null, 	// [K^2] stat correlation probabilities
+			trCP: null,	// [K^2] from-to cummulative state transition probabilities
+			N0: null, 	// [K^2] from-to cummulative counts in to-state given starting from-state
+			N1: null,	// [K^2] from-to state transition counts
+			cumH: null, 	// [K^2] cummulative time in from-to transition
+			cumN: null, 	// [K^2] cummulative number of from-to jumps
 			eqP: null, 	// [K] equilibrium state probabilities 
-			A: null,	// [KxK] jump rates
+			A: null,	// [K^2] jump rates
 			
 			// supervised learning parms			
 			batch: 0, 				// batch size in dt-steps to make MLEs
@@ -108,38 +113,104 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			trP = this.trP, // transition probs KxK or coersed to KxK
 			emP = this.emP, // emission (aka observation) probs
-			keys = this.keys = Copy(this.keys || {}, { index:"n", state:"u", class:"k", x:"x", y:"y", z:"z", t:"t" }), // event keys
-			//obs = this.obs, // observation (aka emission or mixing) parms
-			symbols = this.symbols || 2;  // state symbols
+			symbols = this.symbols, // state-index map
+			keys = this.keys = Copy(this.keys || {}, { index:"n", state:"u", class:"k", x:"x", y:"y", z:"z", t:"t" }); // event keys
 
-		if ( this.p ) {   // two-state process via p,Tc
-			var
-				p = this.p,
-				Tc = this.Tc, 
-				meanrate = 2.3/Tc,
-				rate = 2*meanrate,
-				alpha = p * rate,
-				beta = rate - alpha,
-				q = beta / rate,
-				K = this.K = 2;
-			
-			trP = this.trP = [[1-p, p], [q, 1-q]];
-		}
-
-		else
-		if ( this.alpha )  { // two-state process via alpha,beta
+		if ( this.alpha )  { // K-state convergent process via n = (K^2-K)/2 rates
 			var 
 				alpha = this.alpha,
-				beta = this.beta, 
-				p = alpha / (alpha + beta), 
-				q = beta / (alpha + beta),
-				K = this.K = 2;
+				n = alpha.length,
+				alpha0 = alpha.sum(),
+				p = this.p = $(n, (k,p) => p[k] = alpha[k] / alpha0);
+				//Log("alpha->p", p, alpha0);
+		}
+		
+		if ( this.p ) {   // K-state convergent process via n = (K^2-K)/2 trans probs
+			var
+				p = this.p,
+				n = p.length,
+				K = this.K = round( (1 + sqrt(1+8*n))/2 ),
+				n = 0,
+				trP = this.markov = $$(K,K, (fr,to,P) => {
+					if ( to == fr ) P[fr][to] = 0;
+					else
+					if ( to > fr ) P[fr][to] = p[n++];
+				});
 			
-			trP = this.trP = [[1-p, p], [q, 1-q]];
+			trP.use( (fr,to,P) => {
+				if ( to == fr ) P[fr][to] = 1 - P[fr].sum();
+				else
+				if ( to < fr ) P[fr][to] = P[to][fr];
+			});
+			
+			//Log("p->trP", K, trP);
 		}
 
+		if ( this.markov ) {
+			this.transMode = "markov";
+
+			var trP = this.markov;
+
+			if ( trP.constructor.name == "Object" ) {
+				var
+					K = this.K = trP.states,
+					P = $$(K, K, $$zero),
+					dims = emP ? emP.dims : [K];
+
+				delete trP.states;
+				for (var frKey in trP) {
+					var 
+						frP = trP[frKey],
+						frIndex = index( frKey.split(","), dims );
+
+					for (var toKey in frP) {
+						var toIndex = index( toKey.split(","), dims );
+						P[ parseInt(frIndex) ][ parseInt(toIndex) ] = frP[toKey];
+					}
+				}
+
+				P.use( (fr,to) =>  {
+					if ( (fr==to) ) P[fr][to] = 1 - P[fr].sum();
+				});
+				trP = this.markov = P;
+			}
+			
+			var
+				K = this.K = trP.length,
+				trCP = this.trCP = $(K, (fr, P) => {
+					P[fr] = $(K, (to, P) => {
+						P[to] = trP[fr][to];
+						if (to) P[to] += P[to-1];
+					});
+				}),
+				RT = this.RT = meanRecurTimes(trP),  // from-to mean recurrence times
+				ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
+				eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k]	);  // equlib state probs
+		
+			//Log(TRACE, K, trP, trCP, RT, ab, eqP);
+		}
+		
+		if ( this.bayes ) { 
+			this.transMode = "bayes";
+			this.K = this.bayes.length;
+		}
+		
+		if ( this.gillespie) {
+			this.transMode = "gillespie";
+			this.K = this.gillespie;
+			this.gillespie = $( this.K, $zero );
+		}
+
+		if ( this.gauss ) {
+			this.transMode = "gauss";
+			Log(">>>>gauss rp");
+		}
+		
+		if ( this.wiener ) {
+			this.transMode = "wiener";
+		}
+		
 		if ( emP ) {
 			this.obslist = [];
 			if (dims = emP.dims) {
@@ -189,52 +260,23 @@ class RAN {
 			}
 		}
 
-		//if (!symbols) symbols = K;
-		
-		switch ( symbols.constructor.name ) {
-			case "Object":
-				K = 0;
-				for (var key in symbols) K++;
-				this.K = K;
-				break;
-				
-			case "Array":
-				for (var syms = {}, k=0, K=symbols.length; k<K; k++) syms[ symbols[k] ] = k;
-				this.K = K;
-				symbols = this.symbols = syms;
-				break;
-				
-			default:
-				for (var syms = {}, k=0, K=symbols; k<K; k++) syms[ k ] = k;
-				this.K = K;
-				symbols = this.symbols = syms;
-		}
-
+		/*
 		switch ( trP.constructor.name ) {
 			case "Function":
+				this.transMode = "gauss";	// driven by arrival rates
 				break;
 				
 			case "String":
-				var K = this.K = symbols.length;
-				switch (trP) {
-					case "random":
-						trP = this.trP = $$(K, K, (fr,to,P) => P[fr][to] = random() );
-						trP.use( function (fr) {
-							var 
-								P = trP[fr],
-								sum = P.sum( );
-
-							P.use( (to,P) => P[to] /= sum);
-						});
-						break;
-				}
-				
+				this.transMode = trP;	// driven by reactants
 				break;
 
 			case "Array":
-				var
-					K = this.K = trP.length;
+				var K = this.K = trP.length;
 
+				this.transMode = ( trP[0].constructor == Array ) 
+					? "markov" 	// driven by trProbs
+					: "bayes";	// driven by eqProbs 
+				
 				break;
 				//Kto = trP[0].length,
 				//P = $$(K, K, (fr,to,P) => P[fr][to] = (fr<Kfr && to<Kto) ? trP[fr][to] : 0 );
@@ -242,7 +284,6 @@ class RAN {
 
 			case "Object":
 				var
-					K = this.K = trP.states || 2,
 					P = $$(K, K, $$zero),
 					dims = emP ? emP.dims : [K];
 
@@ -262,24 +303,34 @@ class RAN {
 
 				balanceProbs(P);
 				trP = this.trP = P;
+				this.transMode = "markov";
 				//Log("trP", trP);
 				break;
 		}
+		*/
 		
-		var 
-			RT = this.RT = meanRecurTimes(trP),  // from-to mean recurrence times
-			ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
-			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k]	);  // equlib state probs
+		if ( symbols )
+			switch ( symbols.constructor.name ) {
+				case "Object":
+					K = 0;
+					for (var key in symbols) K++;
+					this.K = K;
+					break;
+
+				case "Array":
+					for (var syms = {}, k=0, K=this.K=symbols.length; k<K; k++) syms[ symbols[k] ] = k;
+					symbols = this.symbols = syms;
+					break;
+
+				default:
+					for (var syms = {}, k=0, K=this.K=symbols; k<K; k++) syms[ k ] = k;
+					symbols = this.symbols = syms;
+			}	
 		
-		if ( trP.constructor == Array ) 
-			if ( trP[0].constructor == Array ) 
-				this.transMode = "homogen";
-			else
-				this.transMode = "mh";
-		else
-			this.transMode = "external";
-		
-		//Log(K, trP, N);
+		else {
+			for (var syms = {}, k=0, K=this.K; k<K; k++) syms[ k ] = k;
+			symbols = this.symbols = syms;
+		}
 		
 		// create zero-mean correlation map
 		var map = this.corrMap = new Array(K);
@@ -302,8 +353,7 @@ class RAN {
 			keys: keys,
 			states: K, 
 			syms: symbols, 
-			xMap: map,
-			trProbs: trP
+			xmap: map
 		});	
 
 		// allocate the ensemble
@@ -314,7 +364,6 @@ class RAN {
 			mleA = this.mleA = $$(K,K,$$zero), 
 			cumH = this.cumH = $$(K,K,$$zero),
 			cumN = this.cumN = $$(K,K,$$zero),
-			cumP = this.cumP = $$(K,K,(fr,to,P) => P[fr][to] = trP[fr][to] ),
 			Rmle = this.Rmle = $$(K,K),
 			err = this.err = 1,
 			corP = this.corP = $$(K,K),
@@ -345,10 +394,6 @@ class RAN {
 		}
 		
 		else { // generative mode
-			cumP.use(  (fr) => {  // initialize cummulative state transition probabilties
-				cumulative( cumP[fr] );  
-			});
-
 			if (K == 2) {  // initialize two-state process (same as K-state init but added control)
 				var R01=RT[0][1], R10=RT[1][0];
 
@@ -416,44 +461,47 @@ class RAN {
 		var 
 			ran = this,
 			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
-			cumP = this.cumP, eqP = this.eqP, trP = this.trP,
+			trCP = this.trCP,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN, A = this.A, 
 			symbols=this.symbols, keys = this.keys, emP = this.emP, J=this.J,
 			t = this.t, N = this.N, s=this.s,
-			trans = {
-				external: trP,
+			trans = {	// state transition methods
+				// homogeneous processes
 				
-				homogen: function ( fr ) {  // homogeneous transitions
-					var to = draw( cumP[fr] );
+				markov: function ( fr ) {  // toState via trans probs
+					var to = draw( trCP[fr] );
 					return to;
 				},
 
-				// inhomogeneous jumps
+				// inhomogeneous processes
 
-				gillespie: function( fr ) {  // return toState by computing cumulative trans probs P based on holding times RT
+				gauss: function (fr) {
+					return ran.gauss(t);
+				},
+				
+				gillespie: function( fr ) {  // toState via trans probs computed on holding times
 					var 
-						P = cumP[fr],
+						P = ran.gillespie,
 						R0 = RT[fr], 
 						K = P.length;
 
-					P.use( (to) => P[to] = (fr==to) ? 0 : RT[to] / R0 );
+					P.use( (to) => {
+						P[to] = (fr==to) ? 0 : RT[to] / R0;
+						if (to) P[to] += P[to-1];
+					});
 
-					cumulative(P);	
 					var P0 = P[K-1];
 					P.use( (to) => P[to] /= P0 );
 
 					return draw( P[fr] );
 				},
 
-				mcmc: function ( fr ) {
-				},
-
-				mh: function ( fr ) {  // return toState using metropolis-hastings with generator G
+				bayes: function ( fr ) {  // toState using metropolis-hastings (or mcmc) with generator G
 					var 
-						P = eqP,
-						toG = cumP[fr], 
+						P = ran.bayes,
+						toG = trCP[fr], 
 						to = draw(toG),
-						frG = cumP[to],
+						frG = trCP[to],
 						Ap = P[to] / P[fr],
 						Ag = frG[to] / toG[fr],
 						accept = min(1 , Ap * Ag), // acceptance criteria
@@ -501,7 +549,7 @@ class RAN {
 			});
 		}
 
-		else   // generative mode
+		if (stateTrans) // in generative mode
 			U.use( (n) => {
 				
 				var
@@ -525,6 +573,9 @@ class RAN {
 				}
 				
 			});	
+		
+		else	// problem huston
+			Log(TRACE, "unidentified transition method", ran.transMode);
 			
 		//Log( (t<10) ? "0"+t : t, U.join(""));
 		//if (t<50) Log( t<10 ? "0"+t : t,U,J);		
@@ -561,7 +612,6 @@ class RAN {
 		var 
 			ran = this,
 			U = this.U,
-			trP = this.trP,
 			batch = this.batch;
 
 		if ( ran.learn && !ran.halt )  // learning mode
@@ -578,7 +628,7 @@ class RAN {
 					ran.onEnd();
 					if (cb)
 						cb({  // callback with a ran ctx 
-							trP: ran.trP,	// transition probs
+							//trP: ran.trP,	// transition probs
 							store: ran.store,  // output event store
 							//steps: ran.steps,	// process steps
 							T: ran.steps,		// observation time
@@ -634,7 +684,6 @@ class RAN {
 			cumH = this.cumH, 
 			cumN = this.cumN,
 			RT = this.RT,
-			trP = this.trP,
 			Rmle = this.Rmle,
 			N1 = this.N1,
 			max = Math.max,
@@ -655,12 +704,15 @@ class RAN {
 			});
 		});
 		
-		var 
-			n = 0,
-			err = this.err = trP   // relative error between mle and actual trans probs
-				? abs( mleA[n][n] - trP[n][n] ) / trP[n][n]
-				: 0;
-			
+		if ( this.markov ) {	// relative error between mle and actual trans probs
+			var 
+				trP = this.markov,
+				n = 0,
+				err = this.err = trP   
+					? abs( mleA[n][n] - trP[n][n] ) / trP[n][n]
+					: 0;
+		}
+		
 		/*
 		$$use(Rmle, function (fr,to) {
 			err[fr][to] = (fr == to) ? 0 : ( Rmle[fr][to] - RT[fr][to] ) / RT[fr][to] ;
@@ -701,27 +753,19 @@ class RAN {
 	}
 
 	onConfig() {  // record process config info
-		var
-			//obs = this.obs,		
-			trP = this.trP,
-			emP = this.emP,
-			K = this.K,
-			RT = this.RT, // = meanRecurTimes(trP),  // from-to mean recurrence times
-			eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k] ),   // eq state probs
-			ab = this.ab = firstAbsorb(trP);			
-		
 		this.record("config", {
 			states: this.K,
 			ensemble_size: this.N,		
 			sample_time: this.dt,
 			nyquist: 1/this.dt,
-			cum_tr_probs: this.cumP,
-			tr_probs: trP,
-			mean_recurrence_times: RT,
-			eq_probs: eqP,
-			initial_activity: this.p,
-			wiener_walks: this.wiener ? "yes" : "no",
-			mixing: emP,
+			cum_tr_probs: this.trCP,
+			
+			markov_tr_probs: this.markov,
+			trans_mode: this.transMode,
+			
+			mean_recurrence_times: this.RT,
+			eq_probs: this.eqP,
+			mixing: this.emP,
 			/*mixing: obs 
 				? {
 					mu: obs.mu,
@@ -732,7 +776,7 @@ class RAN {
 			//avg_jump_rate: this.lambda,
 			//exp_coherence_time: this.Tc,
 			run_steps: this.steps,
-			absorb: ab
+			absorb_times: this.ab
 		});
 	}
 	
@@ -994,7 +1038,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 		Log(TRACE, {"MRT det": ctx.Adet});
 
 		if ( ctx.Adet < 1e-3 ) {
-			Log("Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf --> ", ME.pow(P,20));
+			Log(TRACE, "Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
 			return $$(K,K, $$zero );
 		}
 
@@ -1176,7 +1220,24 @@ MRT det= 0.09375
 		
 	case "R2.1":  // config methods
 		var ran = new RAN({
-			trP: [[0.1, 0.9], [0.1, 0.9]]
+			p: [.4],
+/*
+p->trP 2 [ [ 0.6, 0.4 ], [ 0.4, 0.6 ], rows: 2, columns: 2 ]
+R> { 'MRT det': 0.4 }
+R> { keys: 
+   { index: 'n',
+     state: 'u',
+     class: 'k',
+     x: 'x',
+     y: 'y',
+     z: 'z',
+     t: 't' },
+  states: 2,
+  syms: { '0': 0, '1': 1 },
+  xmap: [ 1, -1 ] }
+*/
+
+			//markov: [[0.1, 0.9], [0.1, 0.9]]
 /*
 MRT det= 0.09999999999999998
 R> { keys: 
@@ -1189,15 +1250,21 @@ R> { keys:
      t: 't' },
   states: 2,
   syms: { '0': 0, '1': 1 },
-  xMap: [ 1, -1 ],
+  xmap: [ 1, -1 ],
   trProbs: [ [ 0.1, 0.9 ], [ 0.1, 0.9 ] ] }
   */
-			//trP: { states: 3, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
+			//markov: { states: 3, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1} }
 /*
-{ 'MRT det': 0 }
-Proposed process is not ergodic, thus no unique eq prob exist.  Specify one of the following eq state prs: P^inf -->  [ [ 0.07488979632860272, 0.6664427612064783, 0.25866744246492035 ],
-  [ 0.08330534515080978, 0.7413325575350811, 0.1753620973141107 ],
-  [ 0, 0, 1 ] ]
+R> { 'MRT det': 0 }
+R> Proposed process is not ergodic, thus no unique eq prob exist. Matrix {
+  _data: 
+   [ [ 0.09999999999999998, 0.8, 0.1 ],
+     [ 0.1, 0.9, 0 ],
+     [ 0, 0, 1 ],
+     rows: 3,
+     columns: 3 ],
+  _size: [ 3, 3 ],
+  _datatype: undefined }
 R> { keys: 
    { index: 'n',
      state: 'u',
@@ -1207,15 +1274,9 @@ R> { keys:
      z: 'z',
      t: 't' },
   states: 3,
-  syms: { '0': 0, '1': 1 },
-  xMap: [ 0, 1, -1 ],
-  trProbs: 
-   [ [ 0.09999999999999998, 0.8, 0.1 ],
-     [ 0.1, 0.9, 0 ],
-     [ 0, 0, 1 ],
-     rows: 3,
-     columns: 3 ] }
-*/
+  syms: { '0': 0, '1': 1, '2': 2 },
+  xmap: [ 0, 1, -1 ] }
+  */
 		});
 		break;
 
@@ -1225,10 +1286,10 @@ R> { keys:
 				dims: [3,3],
 				weights: [1,1]
 			},
-			trP: { states: 9, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
+			markov: { states: 9, 0: {1: 0.8, 2: 0.1}, 1: {0: 0.1}, "0,1": { "1,0": .4} }
 		});
 /*
-trP [ [ 0.09999999999999998, 0.8, 0.1, 0, 0, 0, 0, 0, 0 ],
+markov [ [ 0.09999999999999998, 0.8, 0.1, 0, 0, 0, 0, 0, 0 ],
   [ 0.1, 0.9, 0, 0, 0, 0, 0, 0, 0 ],
   [ 0, 0, 1, 0, 0, 0, 0, 0, 0 ],
   [ 0, 0.4, 0, 0.6, 0, 0, 0, 0, 0 ],
@@ -1294,14 +1355,14 @@ states [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
 				dims: [2,2,2],
 				weights: [1,1,1]
 			},
-			trP: "random"
+			markov: "random"
 		});
 		break;
 		
 	case "R3":  // sync pipe with various textbook examples, custom filtering with supervised learning validation
 		var ran = new RAN({
 			// these have same eqprs [.5, .5] (symmetry -> detailed balance --> eqP[k] = 1/K  eqpr)
-			//trP: [[.6, .4],[.4, .6]],
+			//markov: [[.6, .4],[.4, .6]],
 /*
 { stats: 
    { mle_holding_times: [ [Array], [Array], rows: 2, columns: 2 ],
@@ -1318,11 +1379,11 @@ states [ 0, 1, -1, 2, -2, 3, -3, 4, -4 ]
      snr: 8.116902388701156 },
   t: 500,
   at: 'end' }
-MLEs { holding_Times: '[[0,2.4961510304589924],[2.4806757386729417,0]]',
-  viterbiB_emPrs: 'null',
-  viterbiA_trPrs: '[[0.601384811290722,0.39861518870927803],[0.40071697978935383,0.5992830202106462]]' }
+MLEs { holdTimes: '[[0,2.4961510304589924],[2.4806757386729417,0]]',
+  emProbs: 'null',
+  trProbs: '[[0.601384811290722,0.39861518870927803],[0.40071697978935383,0.5992830202106462]]' }
 */
-			//trP: [[0.83177, 0.16822], [0.17152, 0.82848]],
+			//markov: [[0.83177, 0.16822], [0.17152, 0.82848]],
 /*
 { stats: 
    { mle_holding_times: [ [Array], [Array], rows: 2, columns: 2 ],
@@ -1339,11 +1400,11 @@ MLEs { holding_Times: '[[0,2.4961510304589924],[2.4806757386729417,0]]',
      snr: 5.822665342257233 },
   t: 500,
   at: 'end' }
-MLEs { holding_Times: '[[0,5.886354079058032],[5.810975609756097,0]]',
-  viterbiB_emPrs: 'null',
-  viterbiA_trPrs: '[[0.832333007235839,0.167666992764161],[0.169801047868115,0.830198952131885]]' }
+MLEs { holdTimes: '[[0,5.886354079058032],[5.810975609756097,0]]',
+  emProbs: 'null',
+  trProbs: '[[0.832333007235839,0.167666992764161],[0.169801047868115,0.830198952131885]]' }
   */
-			//trP: [[.5, .5], [.5, .5]],
+			//markov: [[.5, .5], [.5, .5]],
 /*
 { stats: 
    { mle_holding_times: [ [Array], [Array], rows: 2, columns: 2 ],
@@ -1360,14 +1421,14 @@ MLEs { holding_Times: '[[0,5.886354079058032],[5.810975609756097,0]]',
      snr: 9.361114481670487 },
   t: 500,
   at: 'end' }
-MLEs { holding_Times: '[[0,1.9922586601800394],[1.9936797628135707,0]]',
-  viterbiB_emPrs: 'null',
-  viterbiA_trPrs: '[[0.5003326916081868,0.4996673083918131],[0.49942810529955756,0.5005718947004424]]' }
+MLEs { holdTimes: '[[0,1.9922586601800394],[1.9936797628135707,0]]',
+  emProbs: 'null',
+  trProbs: '[[0.5003326916081868,0.4996673083918131],[0.49942810529955756,0.5005718947004424]]' }
   */
-			//trP: [[0.1, 0.9], [0.9, 0.1]],
+			//markov: [[0.1, 0.9], [0.9, 0.1]],
 
 			// textbook exs
-			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			markov: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 /*  no emP
 { stats: 
    { mle_holding_times: [ [Array], [Array], rows: 2, columns: 2 ],
@@ -1384,29 +1445,29 @@ MLEs { holding_Times: '[[0,1.9922586601800394],[1.9936797628135707,0]]',
      snr: 7.485803061566579 },
   t: 500,
   at: 'end' }
-MLEs { holding_Times: '[[0,1.1008115157955753],[9.660927669121593,0]]',
-  viterbiB_emPrs: 'null',
-  viterbiA_trPrs: '[[0.10186550976138829,0.8981344902386117],[0.10127438873795999,0.89872561126204]]' }
+MLEs { holdTimes: '[[0,1.1008115157955753],[9.660927669121593,0]]',
+  emProbs: 'null',
+  trProbs: '[[0.10186550976138829,0.8981344902386117],[0.10127438873795999,0.89872561126204]]' }
 */
 			
-			//trP: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2  eqpr [.5, .333, .1666]
-			//trP: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8  no eqprs
+			//markov: [[1/2, 1/3, 1/6], [3/4, 0, 1/4], [0,1,0]],  // pg142 ex2  eqpr [.5, .333, .1666]
+			//markov: [[1,0,0], [1/4, 1/2, 1/4], [0,0,1]],  // pg143 ex8  no eqprs
 
 			// these have different eqprs
-			//trP: [[0.9,0.1],[0.1,0.9]],
-			//trP: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
-			//trP: [[0.1, 0.9], [0.3, 0.7]],
-			//trP: [[0.1, 0.9], [0.4, 0.6]],
+			//markov: [[0.9,0.1],[0.1,0.9]],
+			//markov: [[0.1, 0.9], [0.1, 0.9]],  // bernoulli scheme has identical rows
+			//markov: [[0.1, 0.9], [0.3, 0.7]],
+			//markov: [[0.1, 0.9], [0.4, 0.6]],
 
 			// textbook exs 
-			//trP: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
-			//trP: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
-			//trP: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
-			//trP: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
+			//markov: [[0,1],[1,0]],  // pg433 ex16  regular (all states reachable) absorbing/non on even/odd steps non-regular non-absorbing but ergodic so --> eqpr [.5, .5]
+			//markov: [[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]],  // pg406 ex1  regular (after 2 steps) thus ergodic so eqpr [.4, .2, .4]
+			//markov: [[0,1,0,0,0], [0.25,0,0.75,0,0], [0,0.5,0,0.5,0], [0,0,0.75,0,0.25], [0,0,0,1,0]],  // pg433 ex17  non-absorbing non-regular but ergodic so eqpr [.0625, .25, .375]
+			//markov: [[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]],    // 2 absorbing states; non-ergodic so 3 eqpr = [.75 ... .25], [.5 ... .5], [.25 ...  .75]
 
-			//trP: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
-			//trP: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
-			//trP: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
+			//markov: [[1-.2, .1, .1], [0, 1-.1, .1], [.1, .1, 1-.2]],
+			//markov: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
+			//markov: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 			
 			/*
 			emP: {
@@ -1429,14 +1490,14 @@ MLEs { holding_Times: '[[0,1.1008115157955753],[9.660927669121593,0]]',
      snr: 7.470356916777998 },
   t: 500,
   at: 'end' }
-MLEs { holding_Times: '[[0,1.0968340824701974],[9.798737174427782,0]]',
-  viterbiB_emPrs: '[
+MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
+  emProbs: '[
   	{"weight":0.5444315148931079,"mu":[1.0139285640388083],"sigma":[[1.020168448272447]],"_gaussian":
   		{"sigma":[[1.020168448272447]],"mu":[1.0139285640388083],"k":1,"_sinv":[[0.9802302763758278]],"_coeff":0.3949791055911031}},
 		
 	{"weight":0.4555684851068921,"mu":[1.071684787418599],"sigma":[[2.070246038073367]],"_gaussian":
 		{"sigma":[[2.070246038073367]],"mu":[1.071684787418599],"k":1,"_sinv":[[0.48303437447011366]],"_coeff":0.2772675754216858}}]',
-  viterbiA_trPrs: '[[0.09848484848484848,0.9015151515151515],[0.09996252391565909,0.9000374760843409]]' }
+  trProbs: '[[0.09848484848484848,0.9015151515151515],[0.09996252391565909,0.9000374760843409]]' }
 */
 
 			batch: 50,  // supervised learning every 50 steps
@@ -1461,9 +1522,9 @@ MLEs { holding_Times: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 							H = ev.stats.mle_holding_times;
 						
 						Log("MLEs", {
-							holding_Times: JSON.stringify(H),
-							viterbiB_emPrs: JSON.stringify(B),
-							viterbiA_trPrs: JSON.stringify(A)
+							holdTimes: JSON.stringify(H),
+							emProbs: JSON.stringify(B),
+							trProbs: JSON.stringify(A)
 						});
 							
 						str.push(ev);
@@ -1474,6 +1535,7 @@ MLEs { holding_Times: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 			N: 500,
 			steps: 500
 		});
+		
 		ran.pipe( function (store) {
 			//Log(store);
 		});
@@ -1482,7 +1544,7 @@ MLEs { holding_Times: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 	case "R3.1":  // gen process for R3.2 with async pipe
 		var ran = new RAN({
 
-			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			markov: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 
 			batch: 800,  // supervised learning every 50 steps
 			
@@ -1508,7 +1570,7 @@ stats :
 	case "R3.2":  // gen process for R3.3 using async pipe
 		var ran = new RAN({
 
-			trP: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
+			markov: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
 
 			//batch: 50,  // supervised learning every 50 steps
 			
@@ -1603,7 +1665,7 @@ stats :
 					}
 				},
 
-				trP: {},  
+				markov: {},  
 				//keys: {state:"u", index: "n"},
 				K: 2,  // assume 2-state process
 				N: 50  // assume 50 members in ensemble
