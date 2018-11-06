@@ -6,7 +6,15 @@
 @requires stream
 @requires jslab
 
-Generate or learn a random (Markov, Gauss, Bayes, Wiener, or Gillespie) process.
+Generate or learn the following random processes:
+
+	process		specified				type
+	=====================================
+	markov 		K^2 trans probs 	homogeneous, categorical
+	bayes 		K equilib probs 		inhomogeneous, categorical 
+	gillespie	states						inhomogeneous, categorical 
+	gauss		pcs							stateless
+	wiener		walks						stateless
 
 refs:
 www.statslab.cam.ac.uk/~rrw1
@@ -78,8 +86,7 @@ class RAN {
 			U1: null, 	// [N] state buffer 
 			J: null,  // [N] jump counter
 			HT: null, 	// [N] next jump time
-			WU: null, 		// [N] wiener/SFI ensemble
-			WQ: null, 		// [N] wiener/SFI ensemble for cummulative walks
+			cumW: null, 		// [N] wiener/SFI ensemble for cummulative walks
 			
 			RT: null, 	// [K^2] from-to holding (mean recurrence) times
 			abT: null, 	// [K'] absorption times K' <= K
@@ -87,7 +94,7 @@ class RAN {
 			mleA: null, 	// [K^2] from-to state mle trans probabilities
 			mleB: null, 	// {mu,sigma} observation mixing parameters
 			corP: null, 	// [K^2] stat correlation probabilities
-			trCP: null,	// [K^2] from-to cummulative state transition probabilities
+			cumP: null,	// [K^2] from-to cummulative state transition probabilities
 			N0: null, 	// [K^2] from-to cummulative counts in to-state given starting from-state
 			N1: null,	// [K^2] from-to state transition counts
 			cumH: null, 	// [K^2] cummulative time in from-to transition
@@ -178,7 +185,7 @@ class RAN {
 			
 			var
 				K = this.K = trP.length,
-				trCP = this.trCP = $(K, (fr, P) => {
+				cumP = this.cumP = $(K, (fr, P) => {
 					P[fr] = $(K, (to, P) => {
 						P[to] = trP[fr][to];
 						if (to) P[to] += P[to-1];
@@ -188,7 +195,7 @@ class RAN {
 				ab = this.ab = firstAbsorb(trP),  // first absoption times, probs, and states
 				eqP = this.eqP = $(K, (k,eqP) => eqP[k] = 1/RT[k][k]	);  // equlib state probs
 		
-			//Log(TRACE, K, trP, trCP, RT, ab, eqP);
+			//Log(TRACE, K, trP, cumP, RT, ab, eqP);
 		}
 		
 		if ( this.bayes ) { 
@@ -204,7 +211,6 @@ class RAN {
 
 		if ( this.gauss ) {
 			this.transMode = "gauss";
-			Log(">>>>gauss rp");
 		}
 		
 		if ( this.wiener ) {
@@ -382,8 +388,7 @@ class RAN {
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
 			ctmode = this.ctmode,
-			WU = this.WU = this.wiener ? $(N) : [],
-			WQ = this.WQ = this.wiener ? $(N) : [];
+			cumW = this.cumW = $(N);
 		
 		this.t = this.s = this.samples = 0;  // initialize process counters
 
@@ -410,19 +415,23 @@ class RAN {
 				});
 			}
 
-			else  // initialize K-state process
+			else  
+			if (K)	// initialize K-state process
 				U.use( (n) => {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					HT[ n ] = RT[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
 				}); 
+			
+			else  { // init stateless process
+				this.NRV = MVN( [0], [[1]] );
+				U.use( (n) => {
+					U[n] = cumW[n] = 0;
+				});
+			}
 		}
 		
 		//Log("HT", HT);
-		if ( this.wiener ) {  //  initialilze wiener processes
-			this.NRV = MVN( [0], [[1]] );
-			for (var n=0; n<N; n++) WU[n] = WQ[n] = 0;
-		}
 
 		this.gamma = $(this.steps, $zero);
 		
@@ -461,24 +470,21 @@ class RAN {
 		var 
 			ran = this,
 			U=this.U,HT=this.HT,RT=this.RT,U0=this.U0,mleA=this.mleA,N0=this.N0,K=this.K,
-			trCP = this.trCP,
+			cumP = this.cumP,
+			cumW = this.cumW,
 			U1=this.U1, N1=this.N1, cumH = this.cumH, cumN = this.cumN, A = this.A, 
 			symbols=this.symbols, keys = this.keys, emP = this.emP, J=this.J,
-			t = this.t, N = this.N, s=this.s,
+			t = this.t, N = this.N, s=this.s, dt = this.dt,
 			trans = {	// state transition methods
 				// homogeneous processes
 				
 				markov: function ( fr ) {  // toState via trans probs
-					var to = draw( trCP[fr] );
+					var to = draw( cumP[fr] );
 					return to;
 				},
 
 				// inhomogeneous processes
 
-				gauss: function (fr) {
-					return ran.gauss(t);
-				},
-				
 				gillespie: function( fr ) {  // toState via trans probs computed on holding times
 					var 
 						P = ran.gillespie,
@@ -499,23 +505,59 @@ class RAN {
 				bayes: function ( fr ) {  // toState using metropolis-hastings (or mcmc) with generator G
 					var 
 						P = ran.bayes,
-						toG = trCP[fr], 
+						toG = cumP[fr], 
 						to = draw(toG),
-						frG = trCP[to],
+						frG = cumP[to],
 						Ap = P[to] / P[fr],
 						Ag = frG[to] / toG[fr],
 						accept = min(1 , Ap * Ag), // acceptance criteria
 						u = random();
 
 					return (u <= accept) ?  to : fr;
+				},
+				
+				// stateless processes
+				
+				gauss: function (t) {
+					var
+						ctx = ran.gauss,	// pcs
+						vals = ctx.values,	// pc eigen values  [unitless]
+						vecs = ctx.vectors,	// pc eigen values	[sqrt Hz]
+						ref = ctx.ref,	// ref eigenvalue
+						N = vals.length,	// pc dim
+						mean = ctx.mean,  // mean events over sample time
+						B = ME.matrix( $(N, (n,B) => {  // [events]
+							var 
+								Bmod = sqrt( expdev( mean * vals[n] * ref ) ),  
+								Barg = random() * PI;
+
+							B[n] = ME.complex( Bmod * cos(Barg), Bmod * sin(Barg) );  
+						}) ),
+						V = ME.matrix( $(N, (n,V) => {  // [sqrt Hz]
+							V[n] = vecs[n][t];
+						}) ),
+						A = ME.dot( B, V),  // [sqrt Hz]
+						lambda = ME.abs(A)^2,  // [Hz]
+						k = lambda * dt;  // [events]
+
+					//Log("gauss", t, N, mean, k);
+					return k;
+				},
+				
+				wiener: function (t) {
+					var 
+						M = ran.wiener,
+						nrv = ran.NRV.sample;
+
+					for (var n=0; n<N; n++) {				
+						for (var sum=cumW[n], j=1, J=floor(M*t); j<=J; j++) sum += nrv()[0];
+						U[n] = sum / sqrt(M);
+						cumW[n] = sum;
+					}
 				}
 			},
 			stateTrans = trans[ran.transMode];
 				
-		U.use( (n) => U1[n] = U[n] );  // hold states to update the N1 counters
-		
-		this.gamma[s] = this.statCorr();
-		
 		if (evs) { // in learning mode with time-ordered events
 			/*
 			if ( !t ) { // initialize states at t=0
@@ -532,24 +574,35 @@ class RAN {
 				
 			t = this.t = evs[0].t;	
 			//Log("t",t);
-			evs.forEach( (ev) => {   // assume events are time-ordered 
-				var 
-					n = ev[keys.index],  // ensemble index = unique event id
-					fr = U[n],   // current state of member (0 if hidden)
-					to = symbols[ev[keys.state]];	// event state (if supervised) or undefined (if hidden)
-				
-				cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
-				cumN[fr][to] ++;  	// total number of from-to jumps
+			if (K)  // categorical 
+				evs.forEach( (ev) => {   // assume events are time-ordered 
+					var 
+						n = ev[keys.index],  // ensemble index = unique event id
+						fr = U[n],   // current state of member (0 if hidden)
+						to = symbols[ev[keys.state]];	// event state (if supervised) or undefined (if hidden)
 
-				J[ n ]++; 		// increment jump counter
-				U[ n ] = to || 0;  		// update state (0 if hidden)
-				HT[ n ] = t;			// hold current time
-				
-				ran.onEvent(n,to,0, [ev[keys.x], ev[keys.y], ev[keys.z]] ); 	// callback with jump info
-			});
+					cumH[fr][to] += t - HT[n]; 	// total holding time in from-to jump
+					cumN[fr][to] ++;  	// total number of from-to jumps
+
+					J[ n ]++; 		// increment jump counter
+					U[ n ] = to || 0;  		// update state (0 if hidden)
+					HT[ n ] = t;			// hold current time
+
+					ran.onEvent(n,to,0, [ev[keys.x], ev[keys.y], ev[keys.z]] ); 	// callback with jump info
+				});
+			
+			else // stateless 
+				evs.forEach(ev => {
+					U[ ev[keys.index] ] += ev[keys.state];
+				});
 		}
 
-		if (stateTrans) // in generative mode
+		else  // in generative mode
+		if (K) { // categorical
+			this.gamma[s] = this.statCorr();		
+			
+			U.use( (n) => U1[n] = U[n] );  // hold states to update the N1 counters
+		
 			U.use( (n) => {
 				
 				var
@@ -573,35 +626,24 @@ class RAN {
 				}
 				
 			});	
+			
+			U.use( (n) => {   // adjust initial from-to counters for computing ensemble correlations
+				N0[ U0[n] ][ U[n] ]++; 
+			});
+
+			U.use( (n) => {  // adjust step from-to counters for computing trans probs
+				N1[ U1[n] ][ U[n] ]++;
+			});
+		}
 		
-		else	// problem huston
-			Log(TRACE, "unidentified transition method", ran.transMode);
+		else	// stateless
+			U.use( (n) => {
+				U[n] = stateTrans(t);
+			});
 			
 		//Log( (t<10) ? "0"+t : t, U.join(""));
 		//if (t<50) Log( t<10 ? "0"+t : t,U,J);		
 		//if (t<5) Log(t,N0);
-		
-		U.use( (n) => {   // adjust initial from-to counters for computing ensemble correlations
-			N0[ U0[n] ][ U[n] ]++; 
-		});
-
-		U.use( (n) => {  // adjust step from-to counters for computing trans probs
-			N1[ U1[n] ][ U[n] ]++;
-		});
-
-		if ( ran.wiener ) {  // step wiener process
-			//Log("wsteps", this.wiener);
-			var 
-				M = ran.wiener,
-				//floor = Math.floor, sqrt = Math.sqrt, 
-				nrv = ran.NRV.sample, WU = ran.WU, WQ = ran.WQ;
-			
-			for (var n=0; n<N; n++) {				
-				for (var sum=WQ[n], j=1, J=floor(M*t); j<=J; j++) sum += nrv()[0];
-				WU[n] = sum / sqrt(M);
-				WQ[n] = sum;
-			}
-		}
 		
 		ran.onStep();
 		ran.t += ran.dt;
@@ -748,7 +790,7 @@ class RAN {
 	onStep () {		// record process step info
 		this.record("step", {
 			gamma:this.gamma[this.s],
-			walk: this.wiener ? this.WU : []
+			walk: this.wiener ? this.U : []
 		});
 	}
 
@@ -758,7 +800,7 @@ class RAN {
 			ensemble_size: this.N,		
 			sample_time: this.dt,
 			nyquist: 1/this.dt,
-			cum_tr_probs: this.trCP,
+			cum_tr_probs: this.cumP,
 			
 			markov_tr_probs: this.markov,
 			trans_mode: this.transMode,
