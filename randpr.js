@@ -202,22 +202,48 @@ class RAN {
 		
 		if ( this.bayes ) { 
 			this.transMode = "bayes";
+			
 			var 
 				bayes = this.bayes,
-				net = bayes.net || {},
+				net = bayes.net = bayes.net || {},
 				eqP = bayes.eqP,
 				K = this.K = eqP.length,
-				dims = bayes.dims = $(N, (n,D) => {	// dims of dependent vars
-					D[n] = ( vars = net[n] ) ? vars.length : 1;
+				dims = bayes.dims = $(N, (n,D) => {	// dims of dependent store
+					var vars = net[ n ] = net[n] || [];
+					D[n] = K**vars.length;
 				}),
-				alpha = bayes.alpha = $(N, (n,A) => {  // Dirchlet priors
-					A[n] = $$(dims[n], K, (m,n,P) => {
-						P[m][n] = 1;
+				alpha = bayes.alpha = $(N, (n,alpha) => {  // allocate Dirchlet priors
+					var 
+						alp = alpha[n] = {};
+					
+					net[n].index( "", K, (key) => {	// set cond priors
+						alp[key] = $(K, (k, Alp) => { // set all to same priors
+							Alp[k] = eqP[k];
+						});
 					});
 				}),
-				theta = bayes.theta = $(N, (n,T) => { // equlib cond probs
-					T[n] = $$(dims[n], K, $$zero);
+				alpha0 = bayes.alpha0 = eqP.sum(),
+				theta = bayes.theta = $(N, (n,theta) => { // allocate conditionals
+					var 
+						the = theta[n] = {};
+					
+					net[n].index( "", K, (key) => {	// set cond priors
+						the[key] = $(K, (k, The) => { // set all to same priors
+							The[k] = alpha / alpha0;
+						});
+					});
+				}),
+				count = bayes.count = $(N, (n,count) => { // allocate state counters 
+					var 
+						cnt = count[n] = {};
+					
+					net[n].index( "", K, (key) => {	// set cond priors
+						cnt[key] = $(K, (k, Cnt) => { // set all to same priors
+							Cnt[k] = 0;
+						});
+					});
 				});
+				
 		}
 		
 		if ( this.gillespie) {
@@ -633,7 +659,31 @@ class RAN {
 				var 
 					bayes = this.bayes,
 					net = bayes.net,
-					dims = bayes.dims;
+					dims = bayes.dims,
+					alpha = bayes.alpha,
+					theta = bayes.theta,
+					count = bayes.count;
+
+				U.use( ( i ) => {
+					var 
+						j = net[ i ].index( U ),
+						counts = count[ i ][ j ],
+						thetas = theta[ i ] [ j ],
+						alphas = alpha[ i ] [ j ],
+						Ucnts = UN[ i ];
+					
+					eqP.use( (k) => {
+						counts[ k ] += Ucnts[ k ];
+					});
+					
+					var
+						count0 = counts.sum(),
+						alpha0 = alphas.sum();
+					
+					eqP.use( (k) => {
+						thetas[ k ] = ( counts[ k ] + alphas[ k ] ) / ( count0 + alpha0 );
+					});
+				});
 			}
 		}
 		
@@ -1166,7 +1216,24 @@ function index(keys, dims) {
 	return idx;
 }
 
-[ 
+[  
+	function index(key, K, cb) {
+		if (cb)
+			if (key.length == this.length) 
+				cb( key );
+
+			else
+				for (var k=0; k<K; k++)
+					this.index( key+k, K, cb );
+		
+		else {
+			var key = "";
+			for (var n=0, N=this.length; n<N; n++) key += vars[ this[n] ];
+
+			return key;
+		}
+	},
+	
 	function sample(delta) {
 		var 
 			A = this,
