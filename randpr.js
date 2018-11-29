@@ -54,9 +54,13 @@ class RAN {
 			// ensemble parameters
 			
 			N: 1, 		// size of node ensemble
-			net: null, 	// { node: [node, ...], ... } conditional dependency network
+			
+			net: null, 	// { node: [node, ...], ... } undirected network
+			dag: null, 	// { node: [node, ...], ... } directed acyclic network
+			
 			symbols: null, 	// state-index map = ["state1", ... "stateK"] || {state1: index, stateK: index} || K implies [0, 1, ... K]
 			corrMap: null,   // map state index to correlation value [value, ... ]
+			
 			store: 	null,  // created by pipe()
 			steps: 1, // number of process steps of size dt 
 			ctmode: false, 	// true=continuous, false=discrete time mode 
@@ -205,7 +209,8 @@ class RAN {
 			var 
 				mode = this.transMode = "bayes",
 				bayes = this.bayes,
-				net = this.net = bayes.net || {},
+				dag = bayes.dag, 
+				net = this.net = bayes.net || dag || {},
 				eqP = bayes.eqP || [0.5, 0.5],
 				K = this.K = eqP.length,
 				NR = this.NR = $$(K, K, ( fr, to , R ) => R[fr][to] = 1 ),
@@ -215,9 +220,39 @@ class RAN {
 						if (to) G[to] += G[to-1];
 					});
 				}), 
-				dims = net.dims = $(N, ( i, D ) => {	// dims of dependent store
-					var vars = net[ i ] = net[ i ] || [];
-					D[ i ] = K**vars.length;
+				V = $(N, (i, V) => { // number verticies - change this to make well-ordered or use max cardinality to make perfect numbering
+					switch ("dumb") {
+						case "dumb": 
+					  		V[i] = i; break;
+						case "well":
+						case "maxcar":
+					}
+				}),
+				A = this.A = $$(N,N, ( i, j, A ) => {	// define adjacency matrix
+					if (dag)		
+						deps.forEach( ( j ) => {  
+							A[ j ][ i ] = 1; A[ i ][ j ] = 0;
+						});
+					
+					else
+						deps.forEach( ( j ) => {
+							A[ j ][ i ] = A[ i ][ j ] = 1;
+						});
+				}),
+				dims = net.dims = $(N, ( i, D ) => {	// dims of stores
+					var deps = net[ i ] = net[ i ] || [];	// dependant nodes 
+					D[ i ] = K**deps.length;
+				}),
+				nd = this.nd = {},	// node non-decendants
+				pa = this.pa = $(N, ( i, pa ) => { //  reservce node parents
+					pa[ i ] = net[ i ];
+				}),
+				bd = this.bd = $(N, ( i, bd ) => { // reserve boundary nodes
+					bd[ i ] = new Array();
+				}),
+				cl = this.cl = {},	// reserve node closures
+				ch = this.ch = $(N, ( i, ch ) => { // reserve children nodes
+					ch[ i ] = new Array();
 				}),
 				alpha = net.alpha = $(N, ( i, alpha ) => {  // allocate Dirchlet priors
 					var 
@@ -250,7 +285,32 @@ class RAN {
 						});
 					});
 				});
-				
+
+			if ( dag )
+				V.use( ( i ) => {
+					net[ i ].forEach( ( j ) => {
+						ch[ j ].push( i );	
+					});
+				});
+			
+			else {
+				V.use( ( i ) => {
+					V.use( ( j ) => {
+						if ( A[ j ][ i ] ) 
+							bd[ i ].push( j );
+						
+						else {
+							var Pci = P[ i ] = {};
+							Pci[ j.join(",") ] = cut( V, cl[ i ] ).join(",");
+						}
+					});
+				});
+			
+			V.use( ( i ) => {
+				V.use ( ( j ) => {
+					if ( !A[ j ][ i ] )
+						P[ i ] = 
+			
 			Log("bayes", N, K, dims, alpha, theta, count, G);			
 		}
 		
