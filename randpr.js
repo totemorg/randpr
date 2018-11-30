@@ -293,7 +293,7 @@ class RAN {
 					});
 				});
 			
-			else {
+			else 
 				V.use( ( i ) => {
 					V.use( ( j ) => {
 						if ( A[ j ][ i ] ) 
@@ -305,11 +305,6 @@ class RAN {
 						}
 					});
 				});
-			
-			V.use( ( i ) => {
-				V.use ( ( j ) => {
-					if ( !A[ j ][ i ] )
-						P[ i ] = 
 			
 			Log("bayes", N, K, dims, alpha, theta, count, G);			
 		}
