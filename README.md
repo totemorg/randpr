@@ -36,11 +36,11 @@ Clone [MAN matrix manipulator](https://github.com/acmesds/jslab) into your PROJE
 
 Require the module:
 
-	var RANDPR = require("randpr");
+	var RAN = require("randpr");
 	
-then create a new instance following the [ENUM deep copy() conventions](https://github.com/acmesds/enum):
+then create a new instance:
 
-	var ran = new RANDPR({
+	var ran = new RAN({
 		key: value, 						// set key
 		"key.key": value, 					// indexed set
 		"key.key.": value					// indexed append
@@ -48,11 +48,15 @@ then create a new instance following the [ENUM deep copy() conventions](https://
 		console.log( err ? "something evil is lurking" : "look mom - Im running!");
 	});
 
-where its [key:value options](/shares/prm/randpr/index.html) override the defaults.
+where [its configuration keys](/shares/prm/randpr/index.html) follow 
+the [ENUM deep copy conventions](https://github.com/acmesds/enum).
 
-The instance can then be piped in the forward or reverse mode:
+The instance can then be piped:
 
 	ran.pipe()
+	
+to genenerate a process (if configured in the forward/generate mode), or learn the process parameters (if 
+configured in the reverse/learning).
 
 ### Simple config
 	var ran = new RAN({
