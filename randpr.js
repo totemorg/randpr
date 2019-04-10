@@ -32,7 +32,7 @@ var
 	// nodejs modules
 	STREAM = require("stream"),		// data streams
 	
-	$ = require("$");   // matrix manipulators
+	$ = require("man");   // matrix manipulators
 
 const { EM, MVN, Copy, Each, Log } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
@@ -1390,7 +1390,11 @@ function index(keys, dims) {
 	}	*/
 ].extend(Array);
 
-switch (process.argv[2]) {   //< unit tests
+switch ( process.argv[2] ) {   //< unit tests
+	case "?":
+		Log("unit test with 'node randpr.js [R1 || R2 || ...]'");
+		break;
+		
 	case "R1":  // mean recurrence times
 		Log( meanRecurTimes(  
 			[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
