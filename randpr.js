@@ -30,9 +30,11 @@ var
 	TRACE = "R>",
 
 	// nodejs modules
-	STREAM = require("stream");			// data streams
+	STREAM = require("stream"),		// data streams
+	
+	$ = require("$");   // matrix manipulators
 
-const { $, $$, EM, MVN, ME, Copy, Each, Log, FLOW } = require("jslab").libs;
+const { EM, MVN, Copy, Each, Log } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
 
 class RAN {
@@ -145,13 +147,13 @@ class RAN {
 				n = p.length,
 				K = this.K = round( (1 + sqrt(1+8*n))/2 ),
 				n = 0,
-				trP = this.markov = $$(K,K, (fr,to,P) => {
+				trP = this.markov = $( [K,K],  (fr,to,P) => {
 					if ( to == fr ) P[fr][to] = 0;
 					else
 					if ( to > fr ) P[fr][to] = p[n++];
 				});
 			
-			trP.use( (fr,to,P) => {
+			trP.$( (fr,to,P) => {
 				if ( to == fr ) P[fr][to] = 1 - P[fr].sum();
 				else
 				if ( to < fr ) P[fr][to] = P[to][fr];
@@ -169,7 +171,7 @@ class RAN {
 			if ( trP.constructor.name == "Object" ) {
 				var
 					K = this.K = trP.states,
-					P = $$(K, K, $$zero),
+					P = $( [K, K], $$zero),
 					dims = emP ? emP.dims : [K];
 
 				delete trP.states;
@@ -184,7 +186,7 @@ class RAN {
 					}
 				}
 
-				P.use( (fr,to) =>  {
+				P.$( (fr,to) =>  {
 					if ( (fr==to) ) P[fr][to] = 1 - P[fr].sum();
 				});
 				trP = this.markov = P;
@@ -213,7 +215,7 @@ class RAN {
 				net = this.net = bayes.net || dag || {},
 				eqP = bayes.eqP || [0.5, 0.5],
 				K = this.K = eqP.length,
-				NR = this.NR = $$(K, K, ( fr, to , R ) => R[fr][to] = 1 ),
+				NR = this.NR = $( [K, K], ( fr, to , R ) => R[fr][to] = 1 ),
 				G = bayes.G = bayes.G || $(K, (fr, G) => {  // mcmc generator G is a cummulative prob
 					G[fr] = $(K, (to, G) => {
 						G[to] = eqP[to];
@@ -228,7 +230,7 @@ class RAN {
 						case "maxcar":
 					}
 				}),
-				A = this.A = $$(N,N, ( i, j, A ) => {	// define adjacency matrix
+				A = this.A = $( [N,N], ( i, j, A ) => {	// define adjacency matrix
 					if (dag)		
 						deps.forEach( ( j ) => {  
 							A[ j ][ i ] = 1; A[ i ][ j ] = 0;
@@ -287,15 +289,15 @@ class RAN {
 				});
 
 			if ( dag )
-				V.use( ( i ) => {
+				V.$( ( i ) => {
 					net[ i ].forEach( ( j ) => {
 						ch[ j ].push( i );	
 					});
 				});
 			
 			else 
-				V.use( ( i ) => {
-					V.use( ( j ) => {
+				V.$( ( i ) => {
+					V.$( ( j ) => {
 						if ( A[ j ][ i ] ) 
 							bd[ i ].push( j );
 						
@@ -314,7 +316,7 @@ class RAN {
 				mode = this.transMode = "gillespie",			
 				K = this.gillespie,
 				gillespie = this.gillespie = $(K, $zero),
-				NR = this.NR = $$(K, K, ( fr, to , R ) => R[fr][to] = 1 );
+				NR = this.NR = $( [K, K], ( fr, to , R ) => R[fr][to] = 1 );
 		}
 
 		if ( this.gauss ) {
@@ -342,7 +344,7 @@ class RAN {
 			if (dims = emP.dims) {
 				var 
 					K = 1,
-					drop = dims.use( (n,Dims) => K *= Dims[n] ),
+					drop = dims.$( (n,Dims) => K *= Dims[n] ),
 					weights = emP.weights,
 					D = dims.length,
 					grid = emP.grid = perms( [], dims, []),  // state grid	
@@ -356,13 +358,13 @@ class RAN {
 								mu[i] = grid[k][n++] + 0.5
 							),
 
-							L = $$(D,D, (i,j, L) => 	// lower trianular matrixfs with real, positive diagonal
+							L = $( [D,D], (i,j, L) => 	// lower trianular matrixfs with real, positive diagonal
 								L[i][j] = (i <= j ) ? random() : 0
 							), 
 
-							sigma = $$(D,D, function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
+							sigma = $( [D,D], function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
 								var dot = 0;
-								L.use( function (n) {
+								L.$( function (n) {
 									dot += L[i][n] * L[j][n];
 								});
 								A[i][j] = dot * weights[i] * weights[j]
@@ -439,37 +441,37 @@ class RAN {
 		var 
 			U1 = this.U1 = $(N),
 			UK = this.UK = $(N, $zero),
-			N1 = this.N1 = $$(K,K,$$zero),	
-			mleA = this.mleA = $$(K,K,$$zero), 
-			cumH = this.cumH = $$(K,K,$$zero),
-			cumN = this.cumN = $$(K,K,$$zero),
-			mleR = this.mleR = $$(K,K),
+			N1 = this.N1 = $( [K,K], $$zero),	
+			mleA = this.mleA = $( [K,K], $$zero), 
+			cumH = this.cumH = $( [K,K], $$zero),
+			cumN = this.cumN = $( [K,K], $$zero),
+			mleR = this.mleR = $( [K,K] ),
 			err = this.err = 1,
-			corP = this.corP = $$(K,K),
+			corP = this.corP = $( [K,K] ),
 			emP = this.emP,
 			eqP = this.eqP = $(K, $zero),
 			p = 1/K,
 			Np = p * N,
-			N0 = this.N0 = $$(K,K, (fr,to,N0) => N0[fr][to] = (fr == to) ? Np : 0 ),
+			N0 = this.N0 = $( [K,K],  (fr,to,N0) => N0[fr][to] = (fr == to) ? Np : 0 ),
 			UH = this.UH = $(N),
 			U = this.U = $(N),
 			U0 = this.U0 = $(N),
 			ctmode = this.ctmode,
-			UN = this.UN = $$(N, K, $$zero);
+			UN = this.UN = $( [N, K], $$zero);
 		
 		this.t = this.s = this.samples = 0;  // initialize process counters
 
 		// initialize ensemble
 		
 		if ( this.learn ) {  // in learning mode
-			U.use( (n) => UH[n] = U0[n] = U[n] = 0 );
+			U.$( (n) => UH[n] = U0[n] = U[n] = 0 );
 		}
 		
 		else { // generative mode
 			if (K == 2) {  // initialize 2-state process (same as K-state init but added control)
 				var R01=NR[0][1], R10=NR[1][0];
 
-				U.use( (n) => {
+				U.$( (n) => {
 					if ( n < Np ) {
 						var fr = U0[n] = U[n] = 1;
 						UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
@@ -484,7 +486,7 @@ class RAN {
 
 			else  
 			if (K)	// initialize K-state process
-				U.use( (n) => {
+				U.$( (n) => {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					UH[ n ] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
@@ -492,7 +494,7 @@ class RAN {
 				}); 
 			
 			else   // initialize stateless process
-				U.use( (n) => {
+				U.$( (n) => {
 					U[n] = 0;
 				});
 		}
@@ -509,8 +511,8 @@ class RAN {
 			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, N = this.N, samples = this.samples;
 
 		if (samples)
-			map.use( (fr) => {
-				map.use( (to) => {
+			map.$( (fr) => {
+				map.$( (to) => {
 					p = corP[fr][to] = N0[fr][to] / samples;
 					cor += map[fr] * map[to] * p;
 				});
@@ -531,9 +533,9 @@ class RAN {
 			eqP = this.eqP,
 			UN = this.UN;
 		
-		eqP.use( (k,P) => {
+		eqP.$( (k,P) => {
 			var sum =0;
-			UN.use( (n,N) => sum += N[k] );
+			UN.$( (n,N) => sum += N[k] );
 			P[k] = sum / N / T;
 		});
 	}
@@ -549,7 +551,7 @@ class RAN {
 			theta = net.theta,
 			count = net.count;
 
-		U.use( ( i ) => {
+		U.$( ( i ) => {
 			var 
 				j = net[ i ].index( U ),
 				counts = count[ i ][ j ],
@@ -557,7 +559,7 @@ class RAN {
 				alphas = alpha[ i ] [ j ],
 				Ucounts = UN[ i ];
 
-			Ucounts.use( (k) => {
+			Ucounts.$( (k) => {
 				counts[ k ] += Ucounts[ k ];
 			});
 
@@ -565,7 +567,7 @@ class RAN {
 				count0 = counts.sum(),
 				alpha0 = alphas.sum();
 
-			Ucounts.use( (k) => {
+			Ucounts.$( (k) => {
 				thetas[ k ] = ( counts[ k ] + alphas[ k ] ) / ( count0 + alpha0 );
 			});
 		});
@@ -577,7 +579,7 @@ class RAN {
 			cumN = this.cumN,
 			mleR = this.mleR;
 		
-		mleR.use( (fr,to) => {   // estimate jump rates using cummulative UH[fr][to] and N[fr][to] jump times and counts
+		mleR.$( (fr,to) => {   // estimate jump rates using cummulative UH[fr][to] and N[fr][to] jump times and counts
 			mleR[fr][to] = (fr == to) ? 0 : cumH[fr][to] / cumN[fr][to];
 		});
 	}
@@ -587,10 +589,10 @@ class RAN {
 			N1 = this.N1,
 			mleA = this.mleA;
 		
-		N1.use( (fr) => {  // transition prob mleA using the 1-step state transition counts
+		N1.$( (fr) => {  // transition prob mleA using the 1-step state transition counts
 			var Nfr = N1[fr], Afr = mleA[fr];
 			Nfr.sum( (sum) => {
-				Afr.use( (to) => {
+				Afr.$( (to) => {
 					Afr[to] = Nfr[to] / sum;
 					//Log(fr,to,Nfr[to], sum);
 				});
@@ -639,13 +641,13 @@ class RAN {
 						R0 = NR[fr], 
 						K = cumP.length;
 
-					cumP.use( (to, P) => {
+					cumP.$( (to, P) => {
 						P[to] = (fr==to) ? 0 : NR[to] / R0;
 						if (to) P[to] += P[to-1];
 					});
 
 					var P0 = cumP[K-1];
-					cumP.use( (to,P) => P[to] /= P0 );
+					cumP.$( (to,P) => P[to] /= P0 );
 
 					return draw( cumP[fr] );
 				},
@@ -684,19 +686,19 @@ class RAN {
 					
 					else {	// use KL expansion to generate count sample from arrivial rate process 
 						var
-							B = ME.matrix( $(N, (n,B) => {  // generate KL coefficients [events]
+							B = $.matrix( $(N, (n,B) => {  // generate KL coefficients [events]
 								var 
 									Bmod = sqrt( expdev( mean * vals[n] / ref ) ),  
 									Barg = random() * PI;
 
 								//if (t == 0)  Log( t , n , N, vals[n] / ref , mean, Bmod);
-								B[n] = ME.complex( Bmod * cos(Barg), Bmod * sin(Barg) );  
+								B[n] = $.complex( Bmod * cos(Barg), Bmod * sin(Barg) );  
 							}) ),
-							V = ME.matrix( $(N, (n,V) => {  // get KL eigen vector at time t [sqrt Hz]
+							V = $.matrix( $(N, (n,V) => {  // get KL eigen vector at time t [sqrt Hz]
 								V[n] = vecs[n][t];  // t index = 0:N samples vectors at t = -T/2 : T/2
 							}) ),
-							A = ME.dot( B, V),  // complex analytic function representing event rate process [sqrt Hz]
-							lambda = ME.abs(A)**2,  // event rate process [Hz]
+							A = $.dot( B, V),  // complex analytic function representing event rate process [sqrt Hz]
+							lambda = $.abs(A)**2,  // event rate process [Hz]
 							k = lambda * dt;  // [events]
 
 						//if (t == 0 ) Log("gauss", t, N, dim, mean, k, ref, A);
@@ -732,7 +734,7 @@ class RAN {
 			},
 			tran = trans[ ran.transMode ];
 				
-		U.use( (n) => U1[n] = U[n] );  // hold current states/values
+		U.$( (n) => U1[n] = U[n] );  // hold current states/values
 		
 		if (evs) { // in learning mode 
 			/*
@@ -742,7 +744,7 @@ class RAN {
 					var n = ev[keys.index];		// ensemble index
 					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
 				});
-				U.use( (n) => {
+				U.$( (n) => {
 					U0[n] = U1[n] = U[n];		// initialize states
 					UK[n] = -1;  // force initial jump counter to 0
 				}); 
@@ -764,7 +766,7 @@ class RAN {
 		}
 
 		else  // in generative mode
-			U.use( (n) => {
+			U.$( (n) => {
 				U[ n ] = tran( t , U[n] );
 			});
 		
@@ -775,7 +777,7 @@ class RAN {
 		if (K)  { // categorical process
 			this.gamma[s] = this.statCorr();		
 
-			U.use( (n) => {  // adjust jump counters
+			U.$( (n) => {  // adjust jump counters
 				var
 					frState = U1[n],
 					toState = U[n];
@@ -796,7 +798,7 @@ class RAN {
 				}
 			});	
 			
-			U.use( (n) => {   // adjust state counters
+			U.$( (n) => {   // adjust state counters
 				var k = U[n]; 				// state
 				N0[ U0[n] ][ k ]++; 	// initial-to counters for computing ensemble correlations
 				N1[ U1[n] ][ k ]++;		// from-to counters for computing trans probs
@@ -805,7 +807,7 @@ class RAN {
 		}
 	
 		else  // stateless process
-			U.use( (n) => {   // adjust counters
+			U.$( (n) => {   // adjust counters
 				UK[ n ] += U[ n ];
 			});
 			
@@ -888,7 +890,7 @@ class RAN {
 			Ks = K ? UK.max() : floor( UK.max() ),
 			F = this.F = $( 1 + Ks , $zero );  
 
-		UK.use( (n) => F[ K ? UK[n] : floor( UK[n] ) ]++ ); // compute count frequencies across the ensemble
+		UK.$( (n) => F[ K ? UK[n] : floor( UK[n] ) ]++ ); // compute count frequencies across the ensemble
 
 		return F;
 	}
@@ -1126,14 +1128,14 @@ function $zero(i,A) {
 function cumulative( P ) {  // replace P with its cumulative
 	switch (0) {
 		case 0:
-			P.use( (k) => {
+			P.$( (k) => {
 				if (k) P[k] += P[k-1];
 			});
 			break;
 			
 		case 1:
 			var cum = 0;
-			P.use( (k) => {
+			P.$( (k) => {
 				var hold = P[k];
 				P[k] = cum;
 				cum += hold;
@@ -1149,12 +1151,12 @@ function range (min,max) { // unused - generate a range
 }	
 
 function balanceRates(A) {   // enforce global balance on jump rates
-	A.use( (k) => A[k][k] = - A[k].sum() );
+	A.$( (k) => A[k][k] = - A[k].sum() );
 	return A;
 }
 
 function balanceProbs(P) {  // enforce global balance on probs
-	P.use( (k) => {
+	P.$( (k) => {
 		P[k][k] = 1 - P[k].sum() 
 	});
 	return P;
@@ -1169,26 +1171,26 @@ function firstAbsorb(P) {  //< compute first absorption times, probs and states
 		K = P.length,
 		kAb = [],
 		kTr = [],
-		x = P.use( (k) => {
+		x = P.$( (k) => {
 			if ( P[k][k] == 1 ) 
 				kAb.push(k+1);
 			else
 				kTr.push(k+1);
 		}),
 		ctx = {
-			P: ME.matrix(P),
+			P: $.matrix(P),
 			K: K,
-			kAb: ME.matrix(kAb),
-			kTr: ME.matrix(kTr),
+			kAb: $.matrix(kAb),
+			kTr: $.matrix(kTr),
 			nAb: kAb.length,
 			nTr: kTr.length,
-			abT: ME.matrix([]),
-			abP: ME.matrix([])
+			abT: $.matrix([]),
+			abP: $.matrix([])
 		};
 	
 	//Log("ab ctx", JSON.stringify(ctx));
 	if ( ctx.nAb && ctx.nTr )
-		ME.eval("Q = P[kTr,kTr]; NR = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*NR;", ctx);
+		$("Q = P[kTr,kTr]; NR = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*NR;", ctx);
 		
 	return {
 		times: ctx.abT._data,
@@ -1231,27 +1233,27 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 
 	var 
 		ctx = {
-			P: ME.matrix(P),
+			P: $.matrix(P),
 			K: P.length
 		},
 		K = ctx.K;
 
 	if ( K > 1) {
-		ME.eval("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
+		$("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
 
 		Log(TRACE, {"MRT det": ctx.Adet});
 
 		if ( ctx.Adet < 1e-3 ) {
 			Log(TRACE, "Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
-			return $$(K,K, $$zero );
+			return $( [K,K],  $$zero );
 		}
 
 		else {
-			ME.eval("wk= -Pu*inv(A);", ctx);
+			$("wk= -Pu*inv(A);", ctx);
 
-			ctx.w = ME.matrix([1].concat(ctx.wk._data[0]));
+			ctx.w = $.matrix([1].concat(ctx.wk._data[0]));
 
-			ME.eval("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
+			$("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
 
 			var 
 				H = ctx.H._data,
@@ -1295,7 +1297,7 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 		logBs = $(K, (k,B) => B[k] = GAMMA.log( alpha[k] ) ),
 		logB = logBs.sum() - GAMMA.log( alpha.sum() );
 	
-	grid.use( (n) => {
+	grid.$( (n) => {
 		var
 			logAs = $(K, (k,A) => A[k] = (alpha[k] - 1) * log( grid[k] ) ),
 			logA = logAs.sum();
@@ -1362,7 +1364,7 @@ function index(keys, dims) {
 
 	function max() {
 		var A = this, Amax = -1e99, Aidx = 0;
-		A.use( (k) => {
+		A.$( (k) => {
 			if ( A[k] > Amax ) {
 				Amax = A[k];
 				Aidx = k;
@@ -1816,7 +1818,6 @@ stats :
 		
 	case "R3.3":  // supervised learning with R3.2 evs using asyn pipe
 		var 
-			getEvents = FLOW.get,	
 			evs = [
 { at: 'jump', t: 1, s: 1, index: 3, state: 0, hold: 0, obs: null },
 { at: 'jump', t: 1, s: 1, index: 5, state: 1, hold: 0, obs: null },
@@ -1857,7 +1858,7 @@ stats :
 			ran = new RAN({
 
 				learn: function (supercb) {
-					getEvents(evs, true, (evs) => {
+					evs.$( true, (evs) => {
 						Log( evs ? ` supervising ${evs.length} events` : " supervised" );
 						
 						if (evs) // feed supervisor
