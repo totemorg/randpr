@@ -7,13 +7,13 @@
 	
 # RANDPR
 
-In its forward/generation mode, RANDPR will generate a first-order, K-state Markov process given 
+In its markov generation mode, RANDPR will generate a first-order, K-state Markov process given 
 its first-order, KxK transition probabilites.  RANDPR also computes equilibrium probabilities (if they 
 exist), mean recurrence times, time to first absorption, absorption probabilites and the statistical 
 auto-covariance function.  RANDPR can create ergodic, regular, absorptive processes, Weiner 
 (stationary in first increments), and wide-sense stationary processes.
 
-In its reverse/learning mode, RANDPR produces supervised and unsupervised estimates:
+In its markov learning mode, RANDPR produces supervised and unsupervised estimates:
 MLEs of the underlying transition probabilities, number of coherence intervals (and related SNR),
 and the underlying intensity profile.  (MLE for the Weiner process, e.g. first time to exit, have not 
 yet been implemented).
@@ -23,6 +23,8 @@ Both discrete- and continious-time models are supported in either forward or rev
 RANDPR can be customized with onStep(), onBatch(), onEnd(), and filter() methods to 
 sample metrics in both forward and reverse modes.  Both modes can make use of piped 
 streams to minimize memory usage.
+
+RANDPR also supports ornstein, bayes, gillespie, and weiner processes.
 
 ## Installation
 
@@ -216,8 +218,6 @@ The instance can then be piped in the forward or reverse mode:
 		});
 	});
 	
-	## Contributing
-
 ## Contributing
 
 See our [issues](https://totem.west.ile.nga.ic.gov/issues.view), [milestones](https://totem.west.ile.nga.ic.gov/milestones.view), [s/w requirements](https://totem.west.ile.nga.ic.gov/swreqts.view),
