@@ -1771,7 +1771,7 @@ MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 		});
 		break;
 		
-	case "R3.1":  // gen process for R3.2 with async pipe
+	case "R3.1":  // gen process for R3.2 with async pipe to stdout
 		var ran = new RAN({
 
 			markov: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
@@ -1797,7 +1797,7 @@ stats :
 		
 		break;		
 		
-	case "R3.2":  // gen process for R3.3 using async pipe
+	case "R3.2":  // gen process for R3.3 using async pipe to stdout
 		var ran = new RAN({
 
 			markov: [[0.1, 0.9], [0.1, 0.9]],  // pg142 ex3
@@ -1820,7 +1820,7 @@ stats :
 		/* copy stdout evs to R3.3 evs */
 		break;		
 		
-	case "R3.3":  // supervised learning with R3.2 evs using asyn pipe
+	case "R3.3":  // supervised learning with R3.2 evs using sync pipe to store
 		var 
 			evs = [
 { at: 'jump', t: 1, s: 1, index: 3, state: 0, hold: 0, obs: null },
@@ -1901,7 +1901,7 @@ stats :
 			});
 	
 		ran.pipe( function (store) {
-			//Log(store);
+			Log(store);
 		});
 		/*
  1 '00000111110000000000000000000000000000000000000000'
