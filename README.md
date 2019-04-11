@@ -58,7 +58,7 @@ The instance can then be piped:
 to genenerate a process (if configured in the forward/generate mode), or learn process parameters (if 
 configured in the reverse/learning mode).
 
-The following examples are from RANDPR's unit tester:
+The following examples are from the unit tester:
 
 	node randpr.js [R1 || R2 || ... ]
 
