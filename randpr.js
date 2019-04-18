@@ -69,7 +69,7 @@ class RAN {
 			obslist: null, // observation save list
 			keys: null,  // event key names
 			
-			learn: null, 	// sup/unsup learner(supercb) with callbacks supercb(evs) || supercb(null,onend)
+			learn: null, 	// learner(supercb) calls back supercb(evs) || supercb(null,onend)
 
 			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
 
