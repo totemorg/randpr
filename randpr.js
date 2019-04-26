@@ -1432,7 +1432,7 @@ MRT det= 0.09375
 		
 	case "R2":	  // absorption times
 		Log( firstAbsorb( 
-			//[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
+			[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 /*
 { times: [ [ 3 ], [ 3.9999999999999996 ], [ 2.9999999999999996 ] ],
   probs: 
@@ -1441,7 +1441,7 @@ MRT det= 0.09375
      [ 0.24999999999999997, 0.7499999999999999 ] ],
   states: [ 1, 5 ] }
 */
-			[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]  // no absorbing stats
+			//[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]  // no absorbing stats
 /*
 { times: [], probs: [], states: [] }
 */
@@ -1790,7 +1790,7 @@ MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 			steps: 800  
 		});
 		ran.pipe(process.stdout);
-		/*  
+/*  
 stats : 
 {"mle_holding_times":[[0,1.1092640860692102],[9.909690370969315,0]],"rel_error":0.00471644740291818,"mle_em_probs":null,"mle_tr_probs":[[0.10424480266262637,0.8957551973373736],[0.09969867042494697,0.900301329575053]],"tr_counts":[[8394,72128],[71731,647747]],"mean_count":143.859,"coherence_time":5.574154300194505,"coherence_intervals":143.519529047139,"correlation_0lag":1,"mean_intensity":0.17982375,"degeneracy_param":1.0023653293396015,"snr":8.476115384436026}}		
 */
@@ -1862,7 +1862,7 @@ stats :
 			ran = new RAN({
 
 				learn: function (supercb) {
-					evs.$( true, (evs) => {
+					evs.$( "group", (evs) => {
 						Log( evs ? ` supervising ${evs.length} events` : " supervised" );
 						
 						if (evs) // feed supervisor
