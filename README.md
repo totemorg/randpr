@@ -32,9 +32,11 @@ Clone [RANDPR random process](https://github.com/acmesds/randpr) into your PROJE
 Clone [ENUM basic enumerators](https://github.com/acmesds/enum) into your PROJECT/enum folder.  
 Clone [MAN matrix manipulator](https://github.com/acmesds/man) into your PROJECT/man folder.  
 
-### Unit test
+### Manage 
 
-	npm test [ ? || R1 || R2 || ... ]
+	npm run [ edit || start ]			# Configure environment
+	npm test [ ? || R1 || R2 || ... ]			# unit test
+	npm run [ prmprep || prmload ]		# Revise PRM
 
 ## Usage
 
