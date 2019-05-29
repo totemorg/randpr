@@ -32,6 +32,10 @@ Clone [RANDPR random process](https://github.com/acmesds/randpr) into your PROJE
 Clone [ENUM basic enumerators](https://github.com/acmesds/enum) into your PROJECT/enum folder.  
 Clone [MAN matrix manipulator](https://github.com/acmesds/man) into your PROJECT/man folder.  
 
+### Unit test
+
+	npm test [ ? || R1 || R2 || ... ]
+
 ## Usage
 
 Require the module:
@@ -57,10 +61,6 @@ The instance can then be piped:
 	
 to genenerate a process (if configured in the forward/generate mode), or learn process parameters (if 
 configured in the reverse/learning mode).
-
-The following examples are from the unit tester:
-
-	npm test [R1 || R2 || ... ]
 
 ### R2.1 - config methods
 	var ran = new RAN({
