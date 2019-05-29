@@ -30,7 +30,7 @@ RANDPR also supports ornstein, bayes, gillespie, and weiner processes.
 
 Clone [RANDPR random process](https://github.com/acmesds/randpr) into your PROJECT/randpr folder.  
 Clone [ENUM basic enumerators](https://github.com/acmesds/enum) into your PROJECT/enum folder.  
-Clone [MAN matrix manipulator](https://github.com/acmesds/jslab) into your PROJECT/man folder.  
+Clone [MAN matrix manipulator](https://github.com/acmesds/man) into your PROJECT/man folder.  
 
 ## Usage
 
@@ -60,7 +60,7 @@ configured in the reverse/learning mode).
 
 The following examples are from the unit tester:
 
-	node randpr.js [R1 || R2 || ... ]
+	npm test [R1 || R2 || ... ]
 
 ### R2.1 - config methods
 	var ran = new RAN({

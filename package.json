@@ -4,7 +4,7 @@
   "description": "",
   "main": "randpr.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node randpr.js "
   },
   "repository": {
     "type": "git",
@@ -16,8 +16,5 @@
     "url": "https://github.com/acmesds/randpr/issues"
   },
   "homepage": "https://github.com/acmesds/randpr#readme",
-  "dependencies": {
-	  "enum": "^1.0.0",
-	  "jslab": "^1.0.0"
-  }
+  "dependencies": {}
 }
