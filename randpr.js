@@ -1388,7 +1388,7 @@ function index(keys, dims) {
 
 		return A;
 	}	*/
-].extend(Array);
+].Extend(Array);
 
 switch ( process.argv[2] ) {   //< unit tests
 	case "?":
