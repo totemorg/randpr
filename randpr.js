@@ -8,15 +8,26 @@
 
 Generate or learn categorical or stateless processes:
 
-	process		#states		#parms			parms								homogeneous	categorical
+	process		#states		parms								homogeneous	categorical
 	======================================================================
-	markov 		K				K^2-K			K^2 state trans probs 		Y						Y
-	bayes 		K 				K					K equilib probs, net			N						Y
-	gillespie	K				1					states									N						Y
-	gauss		0				2					mean count,cointervals		N						N
-	wiener		0				1					walks									N						N
-	ornstein	0				2					theta, sigma/theta				N						N
+	markov 		K				K^2-K state via K^2 TxPrs 		Y						Y
+	bayes 		K 				K equilib probs, net				N						Y
+	gillespie	K				states										N						Y
+	gauss		0				mean,values,vectors,ref,dim		N						N
+	wiener		0				walks										N						N
+	ornstein	0				theta, sigma/theta					N						N
 	
+Gauss parms:
+		values = [ ... ] ,	// pc eigen values  [unitless]
+		vectors = [ [...], ...] ,	// pc eigen values	[sqrt Hz]
+		ref = float,		// ref eigenvalue 
+		dim = int,	// max pc dim M = obs interval T 
+		mean = float // mean count in obs interval T
+
+Wiener parms:
+		walks = int // number of walks at each time step to make (stationary in first
+		increments) process. 0 disables.
+		
 refs:
 www.statslab.cam.ac.uk/~rrw1
 www.stat.yale.edu/~pollard
@@ -137,7 +148,7 @@ class RAN {
 				alpha = this.alpha,
 				n = alpha.length,
 				alpha0 = alpha.sum(),
-				p = this.p = $(n, (k,p) => p[k] = alpha[k] / alpha0);
+				p = this.p = $( n, (k,p) => p[k] = alpha[k] / alpha0 );
 				//Log("alpha->p", p, alpha0);
 		}
 		
@@ -163,10 +174,9 @@ class RAN {
 		}
 
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
+			this.transMode = "markov";
 			var 
-				mode = this.transMode = "markov",
-				markov = this.markov,
-				trP = markov;
+				trP = this.markov;
 
 			if ( trP.constructor.name == "Object" ) {
 				var
@@ -194,17 +204,17 @@ class RAN {
 			
 			var
 				K = this.K = trP.length,
-				cumP = markov.cumP = $(K, (fr, P) => {
+				cumP = trP.cumP = $(K, (fr, P) => {
 					P[fr] = $(K, (to, P) => {
 						P[to] = trP[fr][to];
 						if (to) P[to] += P[to-1];
 					});
 				}),
-				NR = this.NR = markov.recurTimes = meanRecurTimes(trP),  // from-to mean recurrence times
-				ab = markov.absorb = firstAbsorb(trP),  // first absoption times, probs, and states
-				eqP = markov.eqP = $(K, (k,P) => P[k] = 1/NR[k][k]	);  // equlib state probs
+				NR = this.NR = trP.recurTimes = meanRecurTimes(trP),  // from-to mean recurrence times
+				ab = trP.absorb = firstAbsorb(trP),  // first absoption times, probs, and states
+				eqP = trP.eqP = $(K, (k,P) => P[k] = 1/NR[k][k]	);  // equlib state probs
 		
-			//Log(TRACE, K, trP, cumP, NR, ab, eqP);
+			Log(TRACE, K, trP, cumP, NR, ab, eqP);
 		}
 		
 		if ( this.bayes ) { 
@@ -246,7 +256,7 @@ class RAN {
 					D[ i ] = K**deps.length;
 				}),
 				nd = this.nd = {},	// node non-decendants
-				pa = this.pa = $(N, ( i, pa ) => { //  reservce node parents
+				pa = this.pa = $(N, ( i, pa ) => { //  reserve node parents
 					pa[ i ] = net[ i ];
 				}),
 				bd = this.bd = $(N, ( i, bd ) => { // reserve boundary nodes
@@ -312,10 +322,11 @@ class RAN {
 		}
 		
 		if ( this.gillespie) {
+			this.transMode = "gillespie";
+			
 			var
-				mode = this.transMode = "gillespie",			
-				K = this.gillespie,
-				gillespie = this.gillespie = $(K, $zero),
+				K = this.gillespie.states,
+				P = this.gillespie.P = $(K, $zero),
 				NR = this.NR = $( [K, K], ( fr, to , R ) => R[fr][to] = 1 );
 		}
 
@@ -324,20 +335,14 @@ class RAN {
 		}
 		
 		if ( this.wiener ) {
-			var 
-				mode = this.transMode = "wiener",
-				wiener = this.wiener = {
-					walks: this.wiener,
-					nrv: MVN( [0], [[1]] )
-				};
+			this.transMode = "wiener";
+			this.wiener.nrv = MVN( [0], [[1]] );
 		}
 		
 		if (this.ornstein) {
-			var
-				mode = this.transMode = "ornstein",
-				ornstein = this.ornstein,
-				stack = ornstein.stack = $(this.steps, $zero);
-		}			
+			this.transMode = "ornstein";
+			this.ornstein.stack = $(this.steps, $zero);
+		}
 		
 		if ( emP ) {
 			this.obslist = [];
@@ -637,7 +642,7 @@ class RAN {
 				gillespie: function( t, fr ) {  // toState via trans probs computed on holding times
 					var 
 						gillespie = ran.gillespie,
-						cumP = gillespie,
+						cumP = gillespie.P,
 						R0 = NR[fr], 
 						K = cumP.length;
 
@@ -678,7 +683,7 @@ class RAN {
 						vecs = gauss.vectors,	// pc eigen values	[sqrt Hz]
 						ref = gauss.ref,	// ref eigenvalue
 						N = vals.length, // number of eigenvalues being used
-						dim = gauss.dim,	// pc dim
+						dim = gauss.dim,	// max pc dim = obs interval
 						mean = gauss.mean;  // mean events over sample time
 					
 					if ( t >= dim ) // KL expansion exhausted
