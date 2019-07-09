@@ -51,6 +51,7 @@ const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Mat
 class RAN {
 	
 	constructor(opts, cb) {
+		
 		Copy({  // default configuration
 
 			// process parameters
@@ -174,7 +175,7 @@ class RAN {
 		}
 
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
-			this.transMode = "markov";
+			this.trans = "markov";
 			var 
 				trP = this.markov;
 
@@ -218,8 +219,8 @@ class RAN {
 		}
 		
 		if ( this.bayes ) {   // bayesian network
+			this.trans = "bayes";
 			var 
-				mode = this.transMode = "bayes",
 				bayes = this.bayes,
 				dag = bayes.dag, 
 				net = this.net = bayes.net || dag || {},
@@ -322,7 +323,7 @@ class RAN {
 		}
 		
 		if ( this.gillespie) {	// gillespie holding time model
-			this.transMode = "gillespie";
+			this.trans = "gillespie";
 			
 			var
 				K = this.gillespie.states,
@@ -331,16 +332,16 @@ class RAN {
 		}
 
 		if ( this.gauss ) {	// stateless gaussian process
-			this.transMode = "gauss";
+			this.trans = "gauss";
 		}
 		
 		if ( this.wiener ) {	// stateless wiener process
-			this.transMode = "wiener";
+			this.trans = "wiener";
 			this.wiener.nrv = MVN( [0], [[1]] );
 		}
 		
 		if (this.ornstein) {	// stateless ornstein-ulenbeck process
-			this.transMode = "ornstein";
+			this.trans = "ornstein";
 			this.ornstein.stack = $(this.steps, $zero);
 		}
 		
@@ -625,21 +626,21 @@ class RAN {
 			symbols = this.symbols, keys = this.keys, emP = this.emP, 
 			K = this.K, t = this.t, N = this.N, s=this.s, dt = this.dt,
 			
-			trans = {	// transition methods
+			transitions = {
 				// homogeneous stateful process
-				
+
 				markov: function ( t, fr ) {  // toState via trans probs
 					var 
 						markov = ran.markov,
 						cumP = markov.cumP,
 						to = draw( cumP[fr] );
-					
+
 					return to;
 				},
 
 				// inhomogeneous stateful process
 
-				gillespie: function( t, fr ) {  // toState via trans probs computed on holding times
+				gillespie: function ( t, fr ) {  // toState via trans probs computed on holding times
 					var 
 						gillespie = ran.gillespie,
 						cumP = gillespie.P,
@@ -673,22 +674,22 @@ class RAN {
 					//if (t == 0) Log(">>>>>>>>>>>Ginit", t, G, P, accept);
 					return (u <= accept) ?  to : fr;
 				},
-				
+
 				// stateless process
-				
-				gauss: function (t, u) {
+
+				gauss: function ( t, u ) {
 					var
-						gauss = ran.gauss,	// pcs
+						gauss = ran.gauss,
 						vals = gauss.values,	// pc eigen values  [unitless]
 						vecs = gauss.vectors,	// pc eigen values	[sqrt Hz]
 						ref = gauss.ref,	// ref eigenvalue
 						N = vals.length, // number of eigenvalues being used
 						dim = gauss.dim,	// max pc dim = obs interval
 						mean = gauss.mean;  // mean events over sample time
-					
+
 					if ( t >= dim ) // KL expansion exhausted
 						return mean;	// could return negbin dev but good to know it is no longer updating
-					
+
 					else {	// use KL expansion to generate count sample from arrivial rate process 
 						var
 							B = $.matrix( $(N, (n,B) => {  // generate KL coefficients [events]
@@ -710,19 +711,19 @@ class RAN {
 						return k;
 					}
 				},
-				
-				wiener: function (t, u) {
+
+				wiener: function ( t, u ) {
 					var 
 						wiener = ran.wiener,
 						M = wiener.walks,
 						nrv = wiener.nrv.sample;
-					
+
 					for (var j=1, walks=floor(M*t); j<=walks; j++) u += nrv()[0];
 
 					return u / sqrt(M);
 				},
-				
-				ornstein: function (t, u) {
+
+				ornstein: function ( t, u ) {
 					var 
 						ornstein = ran.ornstein,
 						theta = ornstein.theta,
@@ -737,7 +738,8 @@ class RAN {
 					return a * Et * Wt;	
 				}
 			},
-			tran = trans[ ran.transMode ];
+
+			trans = transitions[ ran.trans ];
 				
 		U.$( n => U1[n] = U[n] );  // hold current states/values
 		
@@ -772,7 +774,7 @@ class RAN {
 
 		else  // in generative mode
 			U.$( n => {
-				U[ n ] = tran( t , U[n] );
+				U[ n ] = trans( t , U[n] );
 			});
 		
 		// Log(t, U.join(" "));
@@ -909,6 +911,8 @@ class RAN {
 		this.filter(this.store, ev);
 	}
 	
+	// State methods
+	
 	onBatch () {    // record MLE jump rates and trans probs
 		var 
 			ran = this,
@@ -990,7 +994,7 @@ class RAN {
 			cum_tr_probs: this.cumP,
 			
 			markov_tr_probs: this.markov,
-			trans_mode: this.transMode,
+			//trans_mode: this.transMode,
 			
 			mean_recur_times: this.NR,
 			eq_probs: this.eqP,
