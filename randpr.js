@@ -102,8 +102,8 @@ class RAN {
 			K: 0, 		// number of states (0 if stateless)
 			U: null,    // [N] ensemble states (categorial) or counts (stateless)
 			U0: null, 	// [N] ensemble states at t = 0
-			U1: null, 	// [N] ensemble step buffer 
-			UK: null,  // [N] ensemble state accumulators
+			U1: null, 	// [N] ensemble state buffer 
+			UK: null,  // [N] ensemble state change accumulators (stateful K>0) or counts (stateless K=0)
 			UH: null, 	// [N] ensemble holding times
 			UN: null, // [N x K] ensemble counts in state ( # of times U[n] in state k )
 			
@@ -217,7 +217,7 @@ class RAN {
 			Log(TRACE, K, trP, cumP, NR, ab, eqP);
 		}
 		
-		if ( this.bayes ) { 
+		if ( this.bayes ) {   // bayesian network
 			var 
 				mode = this.transMode = "bayes",
 				bayes = this.bayes,
@@ -321,7 +321,7 @@ class RAN {
 			Log("bayes", N, K, dims, alpha, theta, count, G);			
 		}
 		
-		if ( this.gillespie) {
+		if ( this.gillespie) {	// gillespie holding time model
 			this.transMode = "gillespie";
 			
 			var
@@ -330,16 +330,16 @@ class RAN {
 				NR = this.NR = $( [K, K], ( fr, to , R ) => R[fr][to] = 1 );
 		}
 
-		if ( this.gauss ) {
+		if ( this.gauss ) {	// stateless gaussian process
 			this.transMode = "gauss";
 		}
 		
-		if ( this.wiener ) {
+		if ( this.wiener ) {	// stateless wiener process
 			this.transMode = "wiener";
 			this.wiener.nrv = MVN( [0], [[1]] );
 		}
 		
-		if (this.ornstein) {
+		if (this.ornstein) {	// stateless ornstein-ulenbeck process
 			this.transMode = "ornstein";
 			this.ornstein.stack = $(this.steps, $zero);
 		}
@@ -469,14 +469,14 @@ class RAN {
 		// initialize ensemble
 		
 		if ( this.learn ) {  // in learning mode
-			U.$( (n) => UH[n] = U0[n] = U[n] = 0 );
+			U.$( n => UH[n] = U0[n] = U[n] = 0 );
 		}
 		
 		else { // generative mode
 			if (K == 2) {  // initialize 2-state process (same as K-state init but added control)
 				var R01=NR[0][1], R10=NR[1][0];
 
-				U.$( (n) => {
+				U.$( n => {
 					if ( n < Np ) {
 						var fr = U0[n] = U[n] = 1;
 						UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
@@ -491,7 +491,7 @@ class RAN {
 
 			else  
 			if (K)	// initialize K-state process
-				U.$( (n) => {
+				U.$( n => {
 					var fr = floor(random() * K);
 					U0[ n ] = U[n] = fr; 
 					UH[ n ] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
@@ -499,7 +499,7 @@ class RAN {
 				}); 
 			
 			else   // initialize stateless process
-				U.$( (n) => {
+				U.$( n => {
 					U[n] = 0;
 				});
 		}
@@ -626,7 +626,7 @@ class RAN {
 			K = this.K, t = this.t, N = this.N, s=this.s, dt = this.dt,
 			
 			trans = {	// transition methods
-				// homogeneous categorical processes
+				// homogeneous stateful process
 				
 				markov: function ( t, fr ) {  // toState via trans probs
 					var 
@@ -637,7 +637,7 @@ class RAN {
 					return to;
 				},
 
-				// inhomogeneous categorical processes
+				// inhomogeneous stateful process
 
 				gillespie: function( t, fr ) {  // toState via trans probs computed on holding times
 					var 
@@ -674,7 +674,7 @@ class RAN {
 					return (u <= accept) ?  to : fr;
 				},
 				
-				// stateless processes
+				// stateless process
 				
 				gauss: function (t, u) {
 					var
@@ -739,7 +739,7 @@ class RAN {
 			},
 			tran = trans[ ran.transMode ];
 				
-		U.$( (n) => U1[n] = U[n] );  // hold current states/values
+		U.$( n => U1[n] = U[n] );  // hold current states/values
 		
 		if (evs) { // in learning mode 
 			/*
@@ -749,7 +749,7 @@ class RAN {
 					var n = ev[keys.index];		// ensemble index
 					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
 				});
-				U.$( (n) => {
+				U.$( n => {
 					U0[n] = U1[n] = U[n];		// initialize states
 					UK[n] = -1;  // force initial jump counter to 0
 				}); 
@@ -771,7 +771,7 @@ class RAN {
 		}
 
 		else  // in generative mode
-			U.$( (n) => {
+			U.$( n => {
 				U[ n ] = tran( t , U[n] );
 			});
 		
@@ -782,7 +782,7 @@ class RAN {
 		if (K)  { // categorical process
 			this.gamma[s] = this.statCorr();		
 
-			U.$( (n) => {  // adjust jump counters
+			U.$( n => {  // adjust jump counters
 				var
 					frState = U1[n],
 					toState = U[n];
@@ -803,7 +803,7 @@ class RAN {
 				}
 			});	
 			
-			U.$( (n) => {   // adjust state counters
+			U.$( n => {   // adjust state counters
 				var k = U[n]; 				// state
 				N0[ U0[n] ][ k ]++; 	// initial-to counters for computing ensemble correlations
 				N1[ U1[n] ][ k ]++;		// from-to counters for computing trans probs
@@ -812,7 +812,7 @@ class RAN {
 		}
 	
 		else  // stateless process
-			U.$( (n) => {   // adjust counters
+			U.$( n => {   // adjust counters
 				UK[ n ] += U[ n ];
 			});
 			
@@ -829,6 +829,7 @@ class RAN {
 		var 
 			ran = this,
 			U = this.U,
+			interpolate = false,
 			batch = this.batch;
 
 		if ( ran.learn && !ran.halt )  // learning mode
@@ -848,6 +849,8 @@ class RAN {
 							store: ran.store,  // output event store
 							T: ran.steps,		// observation time
 							F: ran.F,	// event count frequencies
+							f: mass( ran.F, N, false),	// event count probabilities
+							Nevs: counts( ran.F ), 	// total number of events
 							J: ran.UK,		// ensemble counts
 							N: ran.N		// ensemble size
 						});
@@ -888,15 +891,15 @@ class RAN {
 		return Tc;
 	}
 	
-	countFreq ( ) {
+	countFreqs ( ) {  // return count frequencies across the ensemble
+
 		var
 			UK = this.UK,  // ensemble counters
-			K = this.K,
-			Ks = K ? UK.max() : floor( UK.max() ),
-			F = this.F = $( 1 + Ks , $zero );  
+			K = this.K,	// number of states (0 = gaussian/wiener/ornstein process)
+			Kmax = K ? UK.max() : floor( UK.max() ),
+			F = this.F = $( 1 + Kmax , $zero );  
 
-		UK.$( (n) => F[ K ? UK[n] : floor( UK[n] ) ]++ ); // compute count frequencies across the ensemble
-
+		UK.$( n => F[ K ? UK[n] : floor( UK[n] ) ]++ ); 
 		return F;
 	}
 	
@@ -915,7 +918,7 @@ class RAN {
 			N = this.N,
 			net = this.net,
 			obslist = this.obslist,
-			F = this.countFreq();
+			F = this.countFreqs();
 
 		if (K) {
 			if ( this.net ) this.condProbs( );
@@ -942,7 +945,7 @@ class RAN {
 		
 		this.record("batch", {
 			count_freq: F,
-			count_prob: $( F.length, (n) => F[n]/N ),
+			count_prob: $( F.length, n => F[n]/N ),
 			rel_error: err,
 			mle_em_events: obslist ? obslist.length : 0,
 			mle_tr_probs: this.mleA,
@@ -953,7 +956,7 @@ class RAN {
 		});	
 	}
 
-	onError( msg ) {	// record process error condition
+	onError ( msg ) {	// record process error condition
 		Log(msg);
 		this.record("error", { 
 			error: msg
@@ -1009,7 +1012,7 @@ class RAN {
 			Kbar = this.UK.avg(),
 			M = T / Tc,
 			delta = Kbar / M,
-			F = this.countFreq(),
+			F = this.countFreqs(),
 			obslist = this.obslist,	
 			K = this.K,
 			mleB = this.mleB = obslist ? EM( obslist, K) : null;
@@ -1128,6 +1131,33 @@ function $$zero(i,j,A) {
 
 function $zero(i,A) {
 	A[i] = 0;
+}
+
+function counts(F) {
+	var Nevs = 0;
+	F.$( k => Nevs += k * F[k] );
+	return Nevs;	
+}
+
+function mass(F, N, interpolate) {
+	return $( F.length, (k, f) => {    // count probabilities
+		if (interpolate)  {  // usually pointless
+			if ( F[k] ) 
+				f[k] = F[k] / N;
+
+			else
+			if ( k ) {
+				N += F[k-1];
+				f[k] = F[k-1] / N;
+			}
+
+			else
+				f[k] = 0;
+		}
+		
+		else
+			f[k] = F[k] / N;
+	});
 }
 
 function cumulative( P ) {  // replace P with its cumulative
@@ -1302,7 +1332,7 @@ function dirichlet(alpha,grid,logP) {  // dirchlet allocation
 		logBs = $(K, (k,B) => B[k] = GAMMA.log( alpha[k] ) ),
 		logB = logBs.sum() - GAMMA.log( alpha.sum() );
 	
-	grid.$( (n) => {
+	grid.$( n => {
 		var
 			logAs = $(K, (k,A) => A[k] = (alpha[k] - 1) * log( grid[k] ) ),
 			logA = logAs.sum();
