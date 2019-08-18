@@ -8,21 +8,36 @@
 
 Generate or learn categorical or stateless processes:
 
-	process		#states		parms								homogeneous	categorical
+	process		#states		parms								homogeneous	
 	======================================================================
-	markov 		K				K^2-K state via K^2 TxPrs 		Y						Y
-	bayes 		K 				K equilib probs, net				N						Y
-	gillespie	K				states										N						Y
-	gauss		0				mean,values,vectors,ref,dim		N						N
-	wiener		0				walks										N						N
-	ornstein	0				theta, sigma/theta					N						N
+	markov 		K				TxPrs 									Y						
+	bayes 		K 				eqP, net || dag				N						
+	gillespie	K				states										N						
+	gauss		0				mean,values,eigen vectors,ref,dim		N					
+	wiener		0				walks										N						
+	ornstein	0				theta, sigma/theta					N						
+
+Bayes parms:
+
+	Equilibrium probs eqP[0:K-1], net = [ [to, probs, ...], ... ] || dag = { ...}.
 	
+Gillespie parms:
+
+	states = K = #states.  Transition probs TxPrs[0:K-1][0:K-1] are synthesized per 
+	gillespie model
+	
+Markov parms:
+
+		The K^2 (K^-K independent) transition probs TxPrs[0:K-1][0:K-1] = {0:1}, where 
+		K = #states and where from-to transition probs specified to conserve prob, that is,
+		must satisify sum_k TxPrs[n][k] = 1.
+
 Gauss parms:
 		values = [ ... ] ,	// pc eigen values  [unitless]
 		vectors = [ [...], ...] ,	// pc eigen values	[sqrt Hz]
-		ref = float,		// ref eigenvalue 
-		dim = int,	// max pc dim M = obs interval T 
-		mean = float // mean count in obs interval T
+		ref = float,		// reference eigenvalue 
+		dim = int,	// max pc dim M = observation interval T 
+		mean = float // mean count in observation interval T
 
 Wiener parms:
 		walks = int // number of walks at each time step to make (stationary in first
@@ -67,7 +82,7 @@ class RAN {
 			
 			// ensemble parameters
 			
-			N: 1, 		// size of node ensemble
+			N: 1, 		// ensemble size
 			
 			net: null, 	// { node: [node, ...], ... } undirected network
 			dag: null, 	// { node: [node, ...], ... } directed acyclic network
@@ -78,17 +93,16 @@ class RAN {
 			store: 	null,  // created by pipe()
 			steps: 1, // number of process steps of size dt 
 			ctmode: false, 	// true=continuous, false=discrete time mode 
-			obslist: null, // observation save list
 			keys: null,  // event key names
 			
 			learn: null, 	// learner(supercb) calls back supercb(evs) || supercb(null,onend)
 
 			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
 
-			filter: function (str,ev) {  // filter output event ev to store/stream str
+			filter: function (str,ev,ran) {  // filter output event ev to store/stream str
 			/**
 			Output event filter
-				filter: function (str, ev) { // event ev for stream/store str
+				filter: function (str, ev, ran) { // event ev for stream/store str
 						switch ( ev.at ) {   // streaming plugins provide an "at" to filter events on
 							case "...":
 							case "...":
@@ -174,6 +188,8 @@ class RAN {
 			//Log("p->trP", K, trP);
 		}
 
+		// define transition mode
+		this.trans = "static";
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
 			this.trans = "markov";
 			var 
@@ -182,17 +198,16 @@ class RAN {
 			if ( trP.constructor.name == "Object" ) {
 				var
 					K = this.K = trP.states,
-					P = $( [K, K], $$zero),
-					dims = emP ? emP.dims : [K];
+					P = $( [K, K], $$zero);
 
 				delete trP.states;
 				for (var frKey in trP) {
 					var 
 						frP = trP[frKey],
-						frIndex = index( frKey.split(","), dims );
+						frIndex = index( frKey.split(","), [K] );
 
 					for (var toKey in frP) {
-						var toIndex = index( toKey.split(","), dims );
+						var toIndex = index( toKey.split(","), [K] );
 						P[ parseInt(frIndex) ][ parseInt(toIndex) ] = frP[toKey];
 					}
 				}
@@ -218,6 +233,7 @@ class RAN {
 			Log(TRACE, K, trP, cumP, NR, ab, eqP);
 		}
 		
+		else
 		if ( this.bayes ) {   // bayesian network
 			this.trans = "bayes";
 			var 
@@ -322,6 +338,7 @@ class RAN {
 			Log("bayes", N, K, dims, alpha, theta, count, G);			
 		}
 		
+		else
 		if ( this.gillespie) {	// gillespie holding time model
 			this.trans = "gillespie";
 			
@@ -331,32 +348,34 @@ class RAN {
 				NR = this.NR = $( [K, K], ( fr, to , R ) => R[fr][to] = 1 );
 		}
 
+		else
 		if ( this.gauss ) {	// stateless gaussian process
 			this.trans = "gauss";
 		}
 		
+		else
 		if ( this.wiener ) {	// stateless wiener process
 			this.trans = "wiener";
-			this.wiener.nrv = MVN( [0], [[1]] );
+			this.wiener.nrv = MVN( [0], [[1]] ).sample;
 		}
 		
-		if (this.ornstein) {	// stateless ornstein-ulenbeck process
+		else
+		if ( this.ornstein ) {	// stateless ornstein-ulenbeck process
 			this.trans = "ornstein";
 			this.ornstein.stack = $(this.steps, $zero);
 		}
 		
+		// setup emissions
+		
 		if ( emP ) {
-			this.obslist = [];
-			if (dims = emP.dims) {
+			if (dims = emP.dims) {	// working on a state grid
 				var 
 					K = 1,
 					drop = dims.$( (n,Dims) => K *= Dims[n] ),
 					weights = emP.weights,
 					D = dims.length,
 					grid = emP.grid = perms( [], dims, []),  // state grid	
-					mus = emP.mu = [],
-					sigmas = emP.sigma = [],
-					gen = emP.gen = $(K, function (k,Gen) { // gauss mixing (mu,sigma) parms 
+					gen = emP.gen = $(K, (k,gen) => { // gauss mixing (mu,sigma) parms 
 						var 
 							n = 0,
 
@@ -376,24 +395,25 @@ class RAN {
 								A[i][j] = dot * weights[i] * weights[j]
 							});
 
-						mus.push( mu );
-						sigmas.push( sigma );
-						
-						Gen[k] = MVN( mu, sigma ).sample;
+						gen[k] = MVN( mu, sigma ).sample;
 					});
 				
 				this.K = K;
 			}
 			
-			else {
+			else {		// gridless emissions
 				var
-					mus = emP.mu,
-					sigmas = emP.sigma,
-					K = this.K = mus.length,
-					gen = emP.gen = $(K, (k,Gen) => Gen[k] = MVN( mus[k], sigmas[k] ).sample );
+					mu = emP.mu,
+					sigma = emP.sigma,
+					K = this.K = mu.length,
+					gen = emP.gen = $(K, (k,gen) => gen[k] = MVN( mu[k], sigma[k] ).sample );
 			}
+			
+			emP.obs = $(K);	
 		}
 
+		// define our state symbole
+		
 		if ( symbols )
 			switch ( symbols.constructor.name ) {
 				case "Object":
@@ -421,25 +441,27 @@ class RAN {
 		
 		var map = this.corrMap = new Array(K);
 		
-		if (K % 2) {
-			map[0] = 0;
-			for (var a=1, k=1; k<K; a++) {
-				map[k++] = a; 
-				map[k++] = -a;
+		if (K) 
+			if (K % 2) {
+				map[0] = 0;
+				for (var a=1, k=1; k<K; a++) {
+					map[k++] = a; 
+					map[k++] = -a;
+				}
 			}
-		}
 
-		else			
-			for (var a=1, k=0; k<K; a++) {
-				map[k++] = a; 
-				map[k++] = -a;
-			}
+			else			
+				for (var a=1, k=0; k<K; a++) {
+					map[k++] = a; 
+					map[k++] = -a;
+				}
 
 		Log(TRACE, {
 			keys: keys,
 			states: K, 
 			syms: symbols, 
-			xmap: map
+			xmap: map,
+			emP: emP
 		});	
 
 		// allocate ensemble vars and state counters
@@ -469,11 +491,11 @@ class RAN {
 
 		// initialize ensemble
 		
-		if ( this.learn ) {  // in learning mode
+		if ( this.learn )   // in learning mode
 			U.$( n => UH[n] = U0[n] = U[n] = 0 );
-		}
 		
-		else { // generative mode
+		else
+		if ( this.trans == "markov" ) { // generative mode
 			if (K == 2) {  // initialize 2-state process (same as K-state init but added control)
 				var R01=NR[0][1], R10=NR[1][0];
 
@@ -504,6 +526,9 @@ class RAN {
 					U[n] = 0;
 				});
 		}
+		
+		else
+			U.$( n => { UH[n] = 0; U0[n] = U[n] = n % K; } );
 		
 		//Log("UH", UH);
 
@@ -629,10 +654,15 @@ class RAN {
 			transitions = {
 				// homogeneous stateful process
 
-				markov: function ( t, fr ) {  // toState via trans probs
+				static: function ( t, u ) { 
+					return u;
+				},
+				
+				markov: function ( t, u ) {  // toState via trans probs
 					var 
 						markov = ran.markov,
 						cumP = markov.cumP,
+						fr = u,
 						to = draw( cumP[fr] );
 
 					return to;
@@ -640,10 +670,11 @@ class RAN {
 
 				// inhomogeneous stateful process
 
-				gillespie: function ( t, fr ) {  // toState via trans probs computed on holding times
+				gillespie: function ( t, u ) {  // toState via trans probs computed on holding times
 					var 
 						gillespie = ran.gillespie,
 						cumP = gillespie.P,
+						fr = u,
 						R0 = NR[fr], 
 						K = cumP.length;
 
@@ -658,11 +689,12 @@ class RAN {
 					return draw( cumP[fr] );
 				},
 
-				bayes: function ( t, fr ) {  // toState using metropolis-hastings (or mcmc) with generator G
+				bayes: function ( t, u ) {  // toState using metropolis-hastings (or mcmc) with generator G
 					var 
 						bayes = ran.bayes,
 						P = bayes.eqP,
 						G = bayes.G,
+						fr = u,
 						toG = G[fr], 
 						to = draw(toG),
 						frG = G[to],
@@ -684,7 +716,7 @@ class RAN {
 						vecs = gauss.vectors,	// pc eigen values	[sqrt Hz]
 						ref = gauss.ref,	// ref eigenvalue
 						N = vals.length, // number of eigenvalues being used
-						dim = gauss.dim,	// max pc dim = obs interval
+						dim = gauss.dim,	// max pc dim = observation interval
 						mean = gauss.mean;  // mean events over sample time
 
 					if ( t >= dim ) // KL expansion exhausted
@@ -716,7 +748,7 @@ class RAN {
 					var 
 						wiener = ran.wiener,
 						M = wiener.walks,
-						nrv = wiener.nrv.sample;
+						nrv = wiener.nrv;
 
 					for (var j=1, walks=floor(M*t); j<=walks; j++) u += nrv()[0];
 
@@ -736,7 +768,7 @@ class RAN {
 					stack.push( Wt );
 
 					return a * Et * Wt;	
-				}
+				}				
 			},
 
 			trans = transitions[ ran.trans ];
@@ -747,7 +779,7 @@ class RAN {
 			/*
 			if ( !t ) { // initialize states at t=0
 				ran.gamma[0] = 1;  // force
-				evs.forEach( (ev) => {
+				evs.forEach( ev => {
 					var n = ev[keys.index];		// ensemble index
 					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
 				});
@@ -801,7 +833,7 @@ class RAN {
 					UH[ n ] = t + hold;    // advance to next jump time (hold is 0 in discrete time mode)
 					UK[ n ]++; 		// increment jump counter
 
-					ran.onEvent(n, toState, hold, emP ? emP.gen[toState]() : null ); 	// callback with jump info
+					ran.onJump(n, toState, hold ); 	// callback with jump info
 				}
 			});	
 			
@@ -811,6 +843,9 @@ class RAN {
 				N1[ U1[n] ][ k ]++;		// from-to counters for computing trans probs
 				UN[ n ] [ k ]++; 		// # times U[n] in state k; for computing cond probs
 			});
+			
+			if ( emP ) 
+				U.$( n => emP.obs[n] = emP.gen[ U[n] ]() );
 		}
 	
 		else  // stateless process
@@ -897,7 +932,7 @@ class RAN {
 
 		var
 			UK = this.UK,  // ensemble counters
-			K = this.K,	// number of states (0 = gaussian/wiener/ornstein process)
+			K = this.K,	// number of states (0 = stateless process)
 			Kmax = K ? UK.max() : floor( UK.max() ),
 			F = this.F = $( 1 + Kmax , $zero );  
 
@@ -908,7 +943,7 @@ class RAN {
 	record (at, ev) {  // record event ev labeled at to store or stream
 		ev.t = this.t;
 		ev.at = at;
-		this.filter(this.store, ev);
+		this.filter(this.store, ev, this);
 	}
 	
 	// State methods
@@ -921,7 +956,6 @@ class RAN {
 			s = this.s,
 			N = this.N,
 			net = this.net,
-			obslist = this.obslist,
 			F = this.countFreqs();
 
 		if (K) {
@@ -951,7 +985,6 @@ class RAN {
 			count_freq: F,
 			count_prob: $( F.length, n => F[n]/N ),
 			rel_error: err,
-			mle_em_events: obslist ? obslist.length : 0,
 			mle_tr_probs: this.mleA,
 			mle_hold_time: this.mleR,
 			eq_probs: K ? this.eqP : null,
@@ -967,17 +1000,12 @@ class RAN {
 		});
 	}
 	
-	onEvent (index,state,hold,obs) {  // record process event info
-		
-		var obslist = this.obslist;
-		
-		if (obslist) obslist.push( obs );  // retain for training Viterbi emission probs
-		
+	onJump (index,state,hold) {  // record process jump info		
 		this.record("jump", {
-			index: index, state:state, hold:hold, obs:obs
+			index: index, state:state, hold:hold
 		});
 	}
-
+	
 	onStep () {		// record process step info
 		this.record("step", {
 			gamma:this.gamma[this.s],
@@ -1006,7 +1034,7 @@ class RAN {
 	
 	onEnd() {  // record process termination info
 		
-		//Log("onend", this.obslist.length);
+		//Log("onend", this.obs.length);
 		
 		var 
 			ran = this,
@@ -1017,9 +1045,8 @@ class RAN {
 			M = T / Tc,
 			delta = Kbar / M,
 			F = this.countFreqs(),
-			obslist = this.obslist,	
 			K = this.K,
-			mleB = this.mleB = obslist ? EM( obslist, K) : null;
+			mleB = this.mleB = this.emP ? EM( this.emP.obs, K) : null;
 
 		//Log("onend UK", UK);
 		
@@ -1041,10 +1068,11 @@ class RAN {
 			}
 		});
 
-		if (evs = this.store)
-			evs.forEach( (ev) => {
-				ev.s = ev.t / Tc;
-			});
+		if (false)
+			if (evs = this.store)
+				evs.forEach( ev => {
+					ev.s = ev.t / Tc;
+				});
 	}
 
 	end(stats, saveStore) {  // terminate process
