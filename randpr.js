@@ -4,7 +4,7 @@
 /**
 @class RAN
 @requires stream
-@requires jslab
+@requires man
 
 Generate or learn categorical or stateless processes:
 
