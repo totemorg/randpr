@@ -497,40 +497,39 @@ class RAN {
 			U.$( n => UH[n] = U0[n] = U[n] = 0 );
 		
 		else
-		if ( this.trans == "markov" ) { // generative mode
-			if (K == 2) {  // initialize 2-state process (same as K-state init but added control)
-				var R01=NR[0][1], R10=NR[1][0];
+		if (K) { // initialize K-state process
+			if (this.markov) {	// init markov process
+				if ( K == 2) { // special 2-state process
+					var R01=NR[0][1], R10=NR[1][0];
 
-				U.$( n => {
-					if ( n < Np ) {
-						var fr = U0[n] = U[n] = 1;
-						UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
-					}
+					U.$( n => {
+						if ( n < Np ) {
+							var fr = U0[n] = U[n] = 1;
+							UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+						}
 
-					else {
-						var fr = U0[n] = U[n] = 0;
-						UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
-					}
-				});
+						else {
+							var fr = U0[n] = U[n] = 0;
+							UH[n] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+						}
+					});
+				}
+
+				else // general K-state process
+					U.$( n => {
+						var fr = floor(random() * K);
+						U0[ n ] = U[n] = fr; 
+						UH[ n ] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
+						UN[ n ][ fr ] = 1;
+					}); 
 			}
-
-			else  
-			if (K)	// initialize K-state process
-				U.$( n => {
-					var fr = floor(random() * K);
-					U0[ n ] = U[n] = fr; 
-					UH[ n ] = NR[fr][fr] = ctmode ? expdev(-1/A[fr][fr]) : 0;
-					UN[ n ][ fr ] = 1;
-				}); 
 			
-			else   // initialize stateless process
-				U.$( n => {
-					U[n] = 0;
-				});
+			else   // initialize stateful process
+				U.$( n => { UH[n] = 0; U0[n] = U[n] = 0; } );
 		}
 		
-		else
-			U.$( n => { UH[n] = 0; U0[n] = U[n] = n % K; } );
+		else	// init stateless process
+			U.$( n => { UH[n] = 0; U0[n] = U[n] = 0; } );
 		
 		//Log("UH", UH);
 
