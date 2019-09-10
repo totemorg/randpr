@@ -41,7 +41,8 @@ Gauss parms:
 
 Wiener parms:
 		walks = int // number of walks at each time step to make (stationary in first
-		increments) process. 0 disables.
+		increments) process. 0 disables. NEEDS debug.  May need to define
+		false Markov parms to init it.
 		
 refs:
 www.statslab.cam.ac.uk/~rrw1
@@ -97,7 +98,7 @@ class RAN {
 			
 			learn: null, 	// learner(supercb) calls back supercb(evs) || supercb(null,onend)
 
-			emP: null, // {mu: mean, sigma: stddevs, dims: [dim, ....] } xyz-emmision probs
+			emP: null, // {mu: [mean,...], sigma: [covar,...], dims: [dim, ....] } xyz-emmision probs
 
 			filter: function (str,ev,ran) {  // filter output event ev to store/stream str
 			/**
@@ -188,8 +189,8 @@ class RAN {
 			//Log("p->trP", K, trP);
 		}
 
-		// define transition mode
-		this.trans = "static";
+		this.trans = "static";	// default transition mode and refine
+		
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
 			this.trans = "markov";
 			var 
@@ -357,6 +358,7 @@ class RAN {
 		if ( this.wiener ) {	// stateless wiener process
 			this.trans = "wiener";
 			this.wiener.nrv = MVN( [0], [[1]] ).sample;
+			Trace("wiener process experimental");
 		}
 		
 		else
@@ -804,14 +806,15 @@ class RAN {
 				});				
 		}
 
-		else  // in generative mode
+		else  { // in generative mode
 			U.$( n => {
 				U[ n ] = trans( t , U[n] );
 			});
+		}
 		
 		// Log(t, U.join(" "));
 		
-		// update process stat counters
+		// update process counters
 		
 		if (K)  { // categorical process
 			this.gamma[s] = this.statCorr();		
@@ -1260,8 +1263,8 @@ function firstAbsorb(P) {  //< compute first absorption times, probs and states
 		$("Q = P[kTr,kTr]; NR = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*NR;", ctx);
 		
 	return {
-		times: ctx.abT._data,
-		probs: ctx.abP._data,
+		times: ctx.abT,
+		probs: ctx.abP,
 		states: kAb
 	};
 }
@@ -1318,14 +1321,15 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 		else {
 			$("wk= -Pu*inv(A);", ctx);
 
-			ctx.w = $.matrix([1].concat(ctx.wk._data[0]));
+			//Log("man meanRecurTimes", ctx);
+			ctx.w = $.matrix([1].concat(ctx.wk[0]));
 
 			$("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
 
 			var 
-				H = ctx.H._data,
-				Z = ctx.Z._data,
-				w = ctx.w._data[0];
+				H = ctx.H,
+				Z = ctx.Z,
+				w = ctx.w[0];
 
 			for (var fr=0;fr<K; fr++) 
 				for (var to=0; to<K; to++) 
