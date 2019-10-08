@@ -403,7 +403,7 @@ class RAN {
 				this.K = K;
 			}
 			
-			else {		// gridless emissions
+			else {		// gridless / stateless emissions
 				var
 					mu = emP.mu,
 					sigma = emP.sigma,
