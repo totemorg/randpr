@@ -417,9 +417,9 @@ class RAN {
 					L = emP.L = emP.L || $.diag( $.ones(K) ),	// lower-triag cov
 					mu = $.zeros(N),
 					sigma = cov = $( " L * D * L' ", emP ),  // may want to randomly rotate this
-					gen = $(K, (k,len) => {
+					gen = emP.gen = $(K, (k,len) => {
 						mu._data[k] = 1;
-						gen[k] = emP.gen = MVN( mu[k], sigma[k] ).sample );
+						gen[k] = MVN( mu[k], sigma[k] ).sample;
 						mu._data[k] = 0;
 					});
 			}
