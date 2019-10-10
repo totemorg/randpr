@@ -8,12 +8,12 @@
 
 Generate or learn categorical or stateless processes:
 
-	process		#states		parms								homogeneous	
+	process		#states		parms								homogeneous	?
 	======================================================================
 	markov 		K				TxPrs 									Y						
-	bayes 		K 				eqP, net || dag				N						
+	bayes 		K 				eqP, net || dag						N						
 	gillespie	K				states										N						
-	gauss		0				mean,values,eigen vectors,ref,dim		N					
+	gauss		0				[*]										N					
 	wiener		0				walks										N						
 	ornstein	0				theta, sigma/theta					N						
 
@@ -33,11 +33,16 @@ Markov parms:
 		must satisify sum_k TxPrs[n][k] = 1.
 
 Gauss parms:
+
 		values = [ ... ] ,	// pc eigen values  [unitless]
 		vectors = [ [...], ...] ,	// pc eigen values	[sqrt Hz]
 		ref = float,		// reference eigenvalue 
 		dim = int,	// max pc dim M = observation interval T 
 		mean = float // mean count in observation interval T
+
+	These parameters generates a correlated random gaussian process and are typically 
+	derived (see e.g. man) for a process with known correlation intervals M = T/Tc or 
+	SNR = sqrt{ M / ( 1 + deltaC / M) }.
 
 Wiener parms:
 		walks = int // number of walks at each time step to make (stationary in first
@@ -403,11 +408,27 @@ class RAN {
 				this.K = K;
 			}
 			
-			else {		// gridless / stateless emissions
+			else 	// gridless / stateless emissions
+			if ( typeof emP == "object" ) { // cholesky decomp for gaussian generators
+				var 
+					K = emP.K = emP.K || 2, 	// #mixes
+					D = emP.D = $.diag(emP.sigma ||emP.cov ||  [1,1,1]),	// on-diag covar
+					N = D._data.length,	// vector dim
+					L = emP.L = emP.L || $.diag( $.ones(K) ),	// lower-triag cov
+					mu = $.zeros(N),
+					sigma = cov = $( " L * D * L' ", emP ),  // may want to randomly rotate this
+					gen = $(K, (k,len) => {
+						mu._data[k] = 1;
+						gen[k] = emP.gen = MVN( mu[k], sigma[k] ).sample );
+						mu._data[k] = 0;
+					});
+			}
+			
+			else {		// explicit [ (mean, covar), ....] for gaussian generators
 				var
-					mu = emP.mu,
-					sigma = emP.sigma,
-					K = this.K = mu.length,
+					mu = emP.mu,	// mean 
+					sigma = emP.sigma || emP.cov,		// covar matricies
+					K = this.K = mu.length,		// #mixes, dim(mu[k]) = D = vector dim
 					gen = emP.gen = $(K, (k,gen) => gen[k] = MVN( mu[k], sigma[k] ).sample );
 			}
 			
