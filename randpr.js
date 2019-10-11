@@ -374,10 +374,11 @@ class RAN {
 		
 		// setup emissions
 		
-		if ( emP ) {
-			if (dims = emP.dims) {	// working on a state grid
+		if ( emP ) {	// setup emission probs
+			if ( emP.dims ) {	// working on a state grid
 				var 
 					K = 1,
+					dims = emP.dims,
 					drop = dims.$( (n,Dims) => K *= Dims[n] ),
 					weights = emP.weights,
 					D = dims.length,
@@ -408,23 +409,8 @@ class RAN {
 				this.K = K;
 			}
 			
-			else 	// gridless / stateless emissions
-			if ( typeof emP == "object" ) { // cholesky decomp for gaussian generators
-				var 
-					K = emP.K = emP.K || 2, 	// #mixes
-					D = emP.D = $.diag(emP.sigma ||emP.cov ||  [1,1,1]),	// on-diag covar
-					N = D._data.length,	// vector dim
-					L = emP.L = emP.L || $.diag( $.ones(K) ),	// lower-triag cov
-					mu = $.zeros(N),
-					sigma = cov = $( " L * D * L' ", emP ),  // may want to randomly rotate this
-					gen = emP.gen = $(K, (k,len) => {
-						mu._data[k] = 1;
-						gen[k] = MVN( mu[k], sigma[k] ).sample;
-						mu._data[k] = 0;
-					});
-			}
-			
-			else {		// explicit [ (mean, covar), ....] for gaussian generators
+			else 
+			if ( emP.mu ) {		// explicit [ (mean, covar), ....] for gaussian generators
 				var
 					mu = emP.mu,	// mean 
 					sigma = emP.sigma || emP.cov,		// covar matricies
@@ -432,7 +418,55 @@ class RAN {
 					gen = emP.gen = $(K, (k,gen) => gen[k] = MVN( mu[k], sigma[k] ).sample );
 			}
 			
-			emP.obs = $(K);	
+			else 	// gridless / stateless emissions
+			if ( typeof emP == "object" ) { // cholesky decomp for gaussian generators
+				emP = Copy( emP, {
+					setup: `
+D = diag( cov ); 
+N = len(cov); 
+L = diag( ones(N) );
+fiddle( L, off ); 
+mu = zeros(N); 
+sigma =  L * D * L'; 
+gen = zeros(K);
+rvgen(gen, mu, sigma);
+`,
+					K: 2,		// mixes
+					off: false,		// off-diag covars
+					cov: [1,1,1]		// on-diag covars
+				});
+				$({ 
+					len: A => A._data.length,
+					fiddle: (L,off) => {
+						var k = 0,  _L = L._data, _off = off ? off._data : null;
+						
+						if ( off )
+							_L.$( (i,j) => {
+								Log(i,j, k, _off);
+								_L[i][j] = ( i > j ) ? _off[k++] : _L[i][j];
+							});
+						
+						Log("L=", _L);
+					},
+					rvgen: (gen,mu,sigma) => {
+						var 
+							_gen = gen._data,
+							_mu = mu._data,
+							_sigma = sigma._data,
+							_mu = [0,0,0]; //$( _mu.length, (i,mu) => mu[i] = _mu[i] );								
+						
+						_gen.$( k  => {
+							_mu[k] = 1;
+							Log("set", k, _mu, _sigma );
+							_gen[k] = MVN( _mu, _sigma ).sample;
+							_mu[k] = 0;
+						});
+					}
+				});
+				const { K } = $( emP.setup, emP);
+			}
+			
+			emP.obs = $(K);		// reserve observations
 		}
 
 		// define our state symbole
