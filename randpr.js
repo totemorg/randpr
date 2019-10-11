@@ -419,51 +419,49 @@ class RAN {
 			}
 			
 			else 	// gridless / stateless emissions
-			if ( typeof emP == "object" ) { // cholesky decomp for gaussian generators
-				emP = Copy( emP, {
-					setup: `
-D = diag( cov ); 
-N = len(cov); 
-L = diag( ones(N) );
-fiddle( L, off ); 
-mu = zeros(N); 
+			if ( typeof emP == "object" ) { // derived [(mean,sigma), ....] using cholesky decomp
+				var ctx = Copy( emP, {
+					decomp: `
+D = diag( oncov ); 
+N = len(oncov); 
+L = fiddle( diag( ones(N) ), offcov );
+mu = concat( [1], zeros(N-1) ); 
 sigma =  L * D * L'; 
-gen = zeros(K);
-rvgen(gen, mu, sigma);
+gen = rvgen(mixes, mu, sigma);
 `,
-					K: 2,		// mixes
-					off: false,		// off-diag covars
-					cov: [1,1,1]		// on-diag covars
+					mixes: 2,		// mixes
+					offcov: false,		// off-diag covars
+					oncov: [1,1,1]		// on-diag covars
 				});
 				$({ 
 					len: A => A._data.length,
-					fiddle: (L,off) => {
-						var k = 0,  _L = L._data, _off = off ? off._data : null;
+					fiddle: (L,offcov) => {
+						var k = 0,  _L = $.list(L), _offcov = $.list(offcov);
 						
-						if ( off )
-							_L.$( (i,j) => {
-								Log(i,j, k, _off);
-								_L[i][j] = ( i > j ) ? _off[k++] : _L[i][j];
-							});
-						
-						Log("L=", _L);
+						return _offcov
+							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] : _L[i][j] ) )
+							: L;
 					},
-					rvgen: (gen,mu,sigma) => {
+					rvgen: (K,mu,sigma) => {		// return K rv generators(mu,sigma) with mean mu and covar sigma
 						var 
-							_gen = gen._data,
-							_mu = mu._data,
-							_sigma = sigma._data,
-							_mu = [0,0,0]; //$( _mu.length, (i,mu) => mu[i] = _mu[i] );								
+							N = $.len(mu),	// vector dim
+							U = $.randRot( N ),	// random rotation
+							_U = $.list(U),
+							_mu = $.list(mu),
+							_sigma = $.list(sigma);
 						
-						_gen.$( k  => {
-							_mu[k] = 1;
-							Log("set", k, _mu, _sigma );
+						//Log("rvgen", K, mu, sigma);
+						return $.matrix( $( K, (k,_gen) => {
+							// Log("set", k, _mu, _sigma );
 							_gen[k] = MVN( _mu, _sigma ).sample;
-							_mu[k] = 0;
-						});
+						}) );
 					}
 				});
-				const { K } = $( emP.setup, emP);
+				
+				const {mixes, sigma,D,L} = Copy( $( ctx.decomp, ctx), emP );
+				var K = this.K = mixes;
+				// Log("sigma", ctx.sigma, "D", D, "L", L);
+				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
 			
 			emP.obs = $(K);		// reserve observations
@@ -598,8 +596,8 @@ rvgen(gen, mu, sigma);
 			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, N = this.N, samples = this.samples;
 
 		if (samples)
-			map.$( (fr) => {
-				map.$( (to) => {
+			map.$( fr => {
+				map.$( to => {
 					p = corP[fr][to] = N0[fr][to] / samples;
 					cor += map[fr] * map[to] * p;
 				});
@@ -638,7 +636,7 @@ rvgen(gen, mu, sigma);
 			theta = net.theta,
 			count = net.count;
 
-		U.$( ( i ) => {
+		U.$( i => {
 			var 
 				j = net[ i ].index( U ),
 				counts = count[ i ][ j ],
@@ -646,7 +644,7 @@ rvgen(gen, mu, sigma);
 				alphas = alpha[ i ] [ j ],
 				Ucounts = UN[ i ];
 
-			Ucounts.$( (k) => {
+			Ucounts.$( k => {
 				counts[ k ] += Ucounts[ k ];
 			});
 
@@ -654,7 +652,7 @@ rvgen(gen, mu, sigma);
 				count0 = counts.sum(),
 				alpha0 = alphas.sum();
 
-			Ucounts.$( (k) => {
+			Ucounts.$( k => {
 				thetas[ k ] = ( counts[ k ] + alphas[ k ] ) / ( count0 + alpha0 );
 			});
 		});
@@ -678,8 +676,8 @@ rvgen(gen, mu, sigma);
 		
 		N1.$( (fr) => {  // transition prob mleA using the 1-step state transition counts
 			var Nfr = N1[fr], Afr = mleA[fr];
-			Nfr.sum( (sum) => {
-				Afr.$( (to) => {
+			Nfr.sum( sum => {
+				Afr.$( to => {
 					Afr[to] = Nfr[to] / sum;
 					//Log(fr,to,Nfr[to], sum);
 				});
