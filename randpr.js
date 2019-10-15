@@ -58,9 +58,6 @@ www.math.dartmouth.edu/~pw
 **/
 
 var			
-	// globals
-	TRACE = "R>",
-
 	// nodejs modules
 	STREAM = require("stream"),		// data streams
 	
@@ -218,7 +215,7 @@ class RAN {
 					}
 				}
 
-				P.$( (fr,to) =>  {
+				P.$$( (fr,to) =>  {
 					if ( (fr==to) ) P[fr][to] = 1 - P[fr].sum();
 				});
 				trP = this.markov = P;
@@ -236,7 +233,7 @@ class RAN {
 				ab = trP.absorb = firstAbsorb(trP),  // first absoption times, probs, and states
 				eqP = trP.eqP = $(K, (k,P) => P[k] = 1/NR[k][k]	);  // equlib state probs
 		
-			Log(TRACE, K, trP, cumP, NR, ab, eqP);
+			Log(K, trP, cumP, NR, ab, eqP);
 		}
 		
 		else
@@ -395,9 +392,9 @@ class RAN {
 								L[i][j] = (i <= j ) ? random() : 0
 							), 
 
-							sigma = $( [D,D], function (i,j, A) { // hermitian pos-def matrix via cholesky decomp
+							sigma = $( [D,D], (i,j, A) => { // hermitian pos-def matrix via cholesky decomp
 								var dot = 0;
-								L.$( function (n) {
+								L.$( n => {
 									dot += L[i][n] * L[j][n];
 								});
 								A[i][j] = dot * weights[i] * weights[j]
@@ -415,25 +412,30 @@ class RAN {
 					mu = emP.mu,	// mean 
 					sigma = emP.sigma || emP.cov,		// covar matricies
 					K = this.K = mu.length,		// #mixes, dim(mu[k]) = D = vector dim
-					gen = emP.gen = $(K, (k,gen) => gen[k] = MVN( mu[k], sigma[k] ).sample );
+					parm = emP.parm = $(K, (k,p) => p[k] = {mu: mu[k], sigma: sigma[k]} ),
+					gen = emP.gen = $(K, (k,g) => g[k] = MVN( parm[k].mu, parm[k].sigma ).sample );
 			}
 			
-			else 	// gridless / stateless emissions
-			if ( typeof emP == "object" ) { // derived [(mean,sigma), ....] using cholesky decomp
-				var ctx = Copy( emP, {
-					decomp: `
+			else  { // derived [(mean,sigma), ....] using cholesky decomp
+				var ctx = Copy( emP, {	// defaults
+					decomp: 	// defines [ (mu,sigma), ... ] generators
+`
 D = diag( oncov ); 
-N = len(oncov); 
+N = len( oncov ); 
 L = fiddle( diag( ones(N) ), offcov );
-mu = concat( [1], zeros(N-1) ); 
 sigma =  L * D * L'; 
-gen = rvgen(mixes, mu, sigma);
+mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
+rvg = rvgen(mixes, mu, sigma, rand);
+snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 `,
+					snr: 1,			// desired s/n
+					rand: true,		// randomize signal means
 					mixes: 2,		// mixes
 					offcov: false,		// off-diag covars
 					oncov: [1,1,1]		// on-diag covars
-				});
-				$({ 
+				});	// define gen context
+				
+				$({ // import
 					len: A => A._data.length,
 					fiddle: (L,offcov) => {
 						var k = 0,  _L = $.list(L), _offcov = $.list(offcov);
@@ -442,24 +444,32 @@ gen = rvgen(mixes, mu, sigma);
 							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] : _L[i][j] ) )
 							: L;
 					},
-					rvgen: (K,mu,sigma) => {		// return K rv generators(mu,sigma) with mean mu and covar sigma
+					rvgen: (K,mu,sigma,rand,ctx) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
 						var 
 							N = $.len(mu),	// vector dim
-							U = $.randRot( N ),	// random rotation
-							_U = $.list(U),
-							_mu = $.list(mu),
-							_sigma = $.list(sigma);
+							rvg = {
+								gen: $(K),
+								parm: $(K)
+							};
 						
-						//Log("rvgen", K, mu, sigma);
-						return $.matrix( $( K, (k,_gen) => {
-							// Log("set", k, _mu, _sigma );
-							_gen[k] = MVN( _mu, _sigma ).sample;
-						}) );
+						const {gen,parm} = rvg;
+						gen.$( n => {
+							parm[n] = {
+								mu: $.list( rand ? $.multiply( $.randRot(N), mu ) : mu ),
+								sigma: $.list( sigma )
+							};
+							gen[n] = MVN( parm[n].mu, parm[n].sigma ).sample;
+						});
+						return rvg;
 					}
 				});
 				
-				const {mixes, sigma,D,L} = Copy( $( ctx.decomp, ctx), emP );
+				const {mixes, sigma,D,L,rvg,snr0} = Copy( $( ctx.decomp, ctx), emP );
 				var K = this.K = mixes;
+				emP.gen = rvg.gen;
+				emP.parm = rvg.parm;
+				//Log("gen snr check", snr0);
+				// Log("parm", parm);
 				// Log("sigma", ctx.sigma, "D", D, "L", L);
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
@@ -511,7 +521,7 @@ gen = rvgen(mixes, mu, sigma);
 					map[k++] = -a;
 				}
 
-		Log(TRACE, {
+		Log({
 			keys: keys,
 			states: K, 
 			syms: symbols, 
@@ -664,8 +674,10 @@ gen = rvgen(mixes, mu, sigma);
 			cumN = this.cumN,
 			mleR = this.mleR;
 		
-		mleR.$( (fr,to) => {   // estimate jump rates using cummulative UH[fr][to] and N[fr][to] jump times and counts
-			mleR[fr][to] = (fr == to) ? 0 : cumH[fr][to] / cumN[fr][to];
+		mleR.$( fr => {   // estimate jump rates using cummulative UH[fr][to] and N[fr][to] jump times and counts
+			mleR[fr].$( to => {
+				mleR[fr][to] = (fr == to) ? 0 : cumH[fr][to] / cumN[fr][to];
+			});
 		});
 	}
 	
@@ -674,11 +686,10 @@ gen = rvgen(mixes, mu, sigma);
 			N1 = this.N1,
 			mleA = this.mleA;
 		
-		N1.$( (fr) => {  // transition prob mleA using the 1-step state transition counts
-			var Nfr = N1[fr], Afr = mleA[fr];
-			Nfr.sum( sum => {
-				Afr.$( to => {
-					Afr[to] = Nfr[to] / sum;
+		N1.$( fr => {  // transition prob mleA using the 1-step state transition counts
+			N1[fr].sum( sum => {
+				mleA[fr].$( to => {
+					mleA[fr][to] = N1[fr][to] / sum;
 					//Log(fr,to,Nfr[to], sum);
 				});
 			});
@@ -1081,7 +1092,8 @@ gen = rvgen(mixes, mu, sigma);
 			
 			mean_recur_times: this.NR,
 			eq_probs: this.eqP,
-			mixing: this.emP,
+			mixes: this.emP ? this.emP.parm : null,
+			snr: this.emP ? this.emP.snr0 : 0,
 			run_steps: this.steps,
 			absorb_times: this.ab
 		});
@@ -1285,7 +1297,7 @@ function balanceProbs(P) {  // enforce global balance on probs
 }			
 
 function Trace(msg) {
-	TRACE.trace(msg);
+	"rand".trace(msg);
 }
 
 function firstAbsorb(P) {  //< compute first absorption times, probs and states
@@ -1363,10 +1375,10 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	if ( K > 1) {
 		$("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
 
-		Log(TRACE, {"MRT det": ctx.Adet});
+		Log({"MRT det": ctx.Adet});
 
 		if ( ctx.Adet < 1e-3 ) {
-			Log(TRACE, "Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
+			Log("Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
 			return $( [K,K],  $$zero );
 		}
 
