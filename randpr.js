@@ -418,16 +418,7 @@ class RAN {
 			
 			else  { // derived [(mean,sigma), ....] using cholesky decomp
 				var ctx = Copy( emP, {	// defaults
-					decomp: 	// defines [ (mu,sigma), ... ] generators
-`
-D = diag( oncov ); 
-N = len( oncov ); 
-L = fiddle( diag( ones(N) ), offcov );
-sigma =  L * D * L'; 
-mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
-rvg = rvgen(mixes, mu, sigma, rand);
-snr0 = norm(mu)/sqrt(sum(diag(sigma)));
-`,
+					decomp: "default",	// defines [ (mu,sigma), ... ] generators
 					snr: 1,			// desired s/n
 					rand: true,		// randomize signal means
 					mixes: 2,		// mixes
@@ -464,11 +455,24 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 					}
 				});
 				
-				const {mixes, sigma,D,L,rvg,snr0} = Copy( $( ctx.decomp, ctx), emP );
+				var
+					decomps = {
+						default: `
+D = diag( oncov ); 
+N = len( oncov ); 
+L = fiddle( diag( ones(N) ), offcov );
+sigma =  L * D * L'; 
+mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
+rvg = rvgen(mixes, mu, sigma, rand);
+snr0 = norm(mu)/sqrt(sum(diag(sigma)));
+`					},
+					decomp = decomps[  ctx.decomp || "default" ] || ctx.decomp || decomps.default;
+				
+				const {mixes, sigma,D,L,rvg,snr0} = Copy( $( decomp, ctx), emP );
 				var K = this.K = mixes;
 				emP.gen = rvg.gen;
 				emP.parm = rvg.parm;
-				//Log("gen snr check", snr0);
+				// Log("gen snr check", snr0);
 				// Log("parm", parm);
 				// Log("sigma", ctx.sigma, "D", D, "L", L);
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
