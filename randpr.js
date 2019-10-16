@@ -420,14 +420,15 @@ class RAN {
 				var ctx = Copy( emP, {	// defaults
 					decomp: "default",	// defines [ (mu,sigma), ... ] generators
 					snr: 1,			// desired s/n
-					rand: true,		// randomize signal means
+					cone: 0,		// randomize means on cone of angle [degs] (0=free)
 					mixes: 2,		// mixes
-					offcov: false,		// off-diag covars
-					oncov: [1,1,1]		// on-diag covars
+					offcov: null,		// off-diag covars
+					dim: 0,				// vector dim 
+					oncov: [1,1,1]		// on-diag covars if dim=0
 				});	// define gen context
 				
-				$({ // import
-					len: A => A._data.length,
+				$({ // import these
+					len: A => A._size[0],
 					fiddle: (L,offcov) => {
 						var k = 0,  _L = $.list(L), _offcov = $.list(offcov);
 						
@@ -435,20 +436,50 @@ class RAN {
 							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] : _L[i][j] ) )
 							: L;
 					},
-					rvgen: (K,mu,sigma,rand,ctx) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
+					rvgen: (K,mu,sigma,cone) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
 						var 
 							N = $.len(mu),	// vector dim
 							rvg = {
 								gen: $(K),
 								parm: $(K)
-							};
+							},
+							xR = $.multiply( $.randRot(N), mu );
 						
+						const {random,cos,sin,PI} = Math;
 						const {gen,parm} = rvg;
+						
+						Log("cone=", cone, "mixes=", K, "dim=", N);
 						gen.$( n => {
-							parm[n] = {
-								mu: $.list( rand ? $.multiply( $.randRot(N), mu ) : mu ),
-								sigma: $.list( sigma )
-							};
+							if ( cone ) {	// stay on cone of given angle from xR
+								const {xG} = $(`
+xR = squeeze(xR);
+a = norm( xR ) * sin(theta);
+N = len(xR);
+V = rand(N);
+V[:,1] = xR;
+U = orthoNorm(V);
+u = squeeze( U[:,2] );
+v = squeeze( U[:,3] );
+delta = a*( cos(phi) * u + sin(phi) * v );
+xG = squeeze(xR) + delta;
+`, {
+	xR: $.list(xR),
+	theta: 	cone*(PI/180),
+	phi: 2*random() - 1
+});
+
+								parm[n] = {
+									mu: $.list( xG ),
+									sigma: $.list( sigma )
+								};
+							}
+							
+							else  // completely random
+								parm[n] = {
+									mu: $.list( n ? $.multiply( $.randRot(N), xR ) : xR ),
+									sigma: $.list( sigma )
+								};
+							
 							gen[n] = MVN( parm[n].mu, parm[n].sigma ).sample;
 						});
 						return rvg;
@@ -458,17 +489,18 @@ class RAN {
 				var
 					decomps = {
 						default: `
-D = diag( oncov ); 
-N = len( oncov ); 
+N = dim ? dim : len( oncov ); 
+D = diag( dim ? ones(N) : oncov ); 
 L = fiddle( diag( ones(N) ), offcov );
 sigma =  L * D * L'; 
 mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
-rvg = rvgen(mixes, mu, sigma, rand);
+rvg = rvgen(mixes, mu, sigma, cone);
 snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 `					},
 					decomp = decomps[  ctx.decomp || "default" ] || ctx.decomp || decomps.default;
 				
 				const {mixes, sigma,D,L,rvg,snr0} = Copy( $( decomp, ctx), emP );
+				Log(rvg);
 				var K = this.K = mixes;
 				emP.gen = rvg.gen;
 				emP.parm = rvg.parm;
