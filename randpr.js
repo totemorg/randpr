@@ -433,7 +433,7 @@ class RAN {
 						var k = 0,  _L = $.list(L), _offcov = $.list(offcov);
 						
 						return _offcov
-							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] : _L[i][j] ) )
+							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] || 0 : _L[i][j] ) )
 							: L;
 					},
 					rvgen: (K,mu,sigma,cone) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
