@@ -455,7 +455,7 @@ class RAN {
 xR = squeeze(xR);
 a = norm( xR ) * sin(theta);
 N = len(xR);
-V = rand(N);
+V = rand(N,3);
 V[:,1] = xR;
 U = orthoNorm(V);
 u = squeeze( U[:,2] );
