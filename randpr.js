@@ -480,7 +480,12 @@ xG = squeeze(xR) + delta;
 									sigma: $.list( sigma )
 								};
 							
-							gen[n] = MVN( parm[n].mu, parm[n].sigma ).sample;
+							try {
+								gen[n] = MVN( parm[n].mu, parm[n].sigma ).sample;
+							}
+							catch (err) {
+								Trace("invalid MVN parameters");
+							}
 						});
 						return rvg;
 					}
