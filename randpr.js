@@ -969,7 +969,10 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 			});
 			
 			if ( emP ) 
-				U.$( n => emP.obs[n] = emP.gen[ U[n] ]() );
+				U.$( n => {
+					//Log(n,U[n], n % K, K);
+					emP.obs[n] = emP.gen[ n % K ]();
+				});
 		}
 	
 		else  // stateless process
