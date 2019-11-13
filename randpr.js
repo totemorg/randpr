@@ -65,6 +65,10 @@ Ornstein:
 	
 		theta: 0-pi
 		a: sigma/sqrt(2 theta)
+		
+Mixing:
+
+	Gauss mixing process with specified mu,sigma (mean, covar), or specified snr, cone, mixes, oncov, offcov
 
 refs:
 www.statslab.cam.ac.uk/~rrw1
@@ -92,14 +96,15 @@ class RAN {
 			// process parameters
 			wiener: 0,  // number of steps at each time step to create weiner / SSI process. 0 disables
 			
-			markov: null, 	// [K^2] from-to state trans probs or { states:K, index: { index: prob, ...}, ...}
-				alpha: null,  // [K^2-K]/2 jump rates 
-				p: null,  // [K^2-K]/2 trans probs
+			markov: null, 	// K^2 from-to state trans probs [...] or K^2-K { states:K, index: { index: prob, ...}, ...}
+				alpha: null,  // K=2 markov jump rate
+				p: null,  // K=2 markov trans probs
 			
 			gauss: null, // (t) => state method
 			gillespie: 0, // number of states to reserve
-			bayes: null, // [K] eq state probs
-			
+			bayes: null, // K eq state probs [....]
+			mixing: null, // {mu: [mean,...], sigma: [covar,...], dims: [dim, ....] } xyz-emmision probs
+		
 			// ensemble parameters
 			
 			N: 1, 		// ensemble size
@@ -116,8 +121,6 @@ class RAN {
 			keys: null,  // event key names
 			
 			learn: null, 	// learner(supercb) calls back supercb(evs) || supercb(null,onend)
-
-			emP: null, // {mu: [mean,...], sigma: [covar,...], dims: [dim, ....] } xyz-emmision probs
 
 			filter: function (str,ev,ran) {  // filter output event ev to store/stream str
 			/**
@@ -174,7 +177,6 @@ class RAN {
 		var 
 			ran = this,
 			N = this.N, // ensemble size
-			emP = this.emP, // emission (aka observation) probs
 			symbols = this.symbols, // state-index map
 			keys = this.keys = Copy(this.keys || {}, { index:"n", state:"u", value: "v", class:"k", x:"x", y:"y", z:"z", t:"t" }); // event keys
 
@@ -208,8 +210,6 @@ class RAN {
 			//Log("p->trP", K, trP);
 		}
 
-		this.trans = "static";	// default transition mode and refine
-		
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
 			this.trans = "markov";
 			var 
@@ -386,9 +386,11 @@ class RAN {
 			this.ornstein.stack = $(this.steps, $zero);
 		}
 		
-		// setup emissions
-		
-		if ( emP ) {	// setup emission probs
+		else
+		if ( this.mixing ) {	// gauss mixing process
+			this.trans = "mixing";
+			var emP = this.mixing;
+			
 			if ( emP.dims ) {	// working on a state grid
 				var 
 					K = 1,
@@ -465,7 +467,6 @@ class RAN {
 						const {random,cos,sin,PI} = Math;
 						const {gen,parm} = rvg;
 						
-						Log("cone=", cone, "mixes=", K, "dim=", N);
 						gen.$( n => {
 							if ( cone ) {	// stay on cone of given angle from xR
 								const {xG} = $(`
@@ -513,6 +514,7 @@ xG = squeeze(xR) + delta;
 						default: `
 N = dim ? dim : len( oncov ); 
 D = diag( dim ? ones(N) : oncov ); 
+g = N / log2(mixes);
 L = fiddle( diag( ones(N) ), offcov );
 sigma =  L * D * L'; 
 mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
@@ -521,8 +523,16 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 `					},
 					decomp = decomps[  ctx.decomp || "default" ] || ctx.decomp || decomps.default;
 				
-				const {mixes, sigma,D,L,rvg,snr0} = Copy( $( decomp, ctx), emP );
-				Log(rvg);
+				const {mixes,dim,sigma,D,L,rvg,snr,cone,g} = Copy( $( decomp, ctx), emP );
+				
+				Log({
+					cone: cone, 
+					mixes: mixes, 
+					snr: snr,
+					gain: g,
+					rvg: rvg
+				});
+				
 				var K = this.K = mixes;
 				emP.gen = rvg.gen;
 				emP.parm = rvg.parm;
@@ -532,7 +542,7 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
 			
-			emP.obs = $(K);		// reserve observations
+			emP.obs = $(N);		// reserve observations
 		}
 
 		// define our state symbole
@@ -580,11 +590,12 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 				}
 
 		Log({
+			ensemble: N,
 			keys: keys,
 			states: K, 
 			syms: symbols, 
 			xmap: map,
-			emP: emP
+			steps: this.steps		
 		});	
 
 		// allocate ensemble vars and state counters
@@ -599,7 +610,7 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 			mleR = this.mleR = $( [K,K] ),
 			err = this.err = 1,
 			corP = this.corP = $( [K,K] ),
-			emP = this.emP,
+			emP = this.mixing,
 			eqP = this.eqP = $(K, $zero),
 			p = 1/K,
 			Np = p * N,
@@ -771,13 +782,13 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 			N1 = this.N1, N0 = this.N0,
 			cumH = this.cumH, cumN = this.cumN, A = this.A, 
 			
-			symbols = this.symbols, keys = this.keys, emP = this.emP, 
+			symbols = this.symbols, keys = this.keys, emP = this.mixing, 
 			K = this.K, t = this.t, N = this.N, s=this.s, dt = this.dt,
 			
 			transitions = {
 				// homogeneous stateful process
 
-				static: function ( t, u ) { 
+				mixing: function ( t, u ) { 
 					return u;
 				},
 				
@@ -1153,8 +1164,8 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 			
 			mean_recur_times: this.NR,
 			eq_probs: this.eqP,
-			mixes: this.emP ? this.emP.parm : null,
-			snr: this.emP ? this.emP.snr0 : 0,
+			mixes: this.mixing ? this.mixing.parm : null,
+			snr: this.mixing ? this.mixing.snr0 : 0,
 			run_steps: this.steps,
 			absorb_times: this.ab
 		});
@@ -1174,7 +1185,8 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 			delta = Kbar / M,
 			F = this.countFreqs(),
 			K = this.K,
-			mleB = this.mleB = this.emP ? EM( this.emP.obs, K) : null;
+			emP = this.mixing,
+			mleB = this.mleB = this.mixing ? EM( emP.obs, K) : null;
 
 		//Log("onend UK", UK);
 		
