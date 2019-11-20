@@ -376,7 +376,7 @@ class RAN {
 		else
 		if ( this.wiener ) {	// stateless wiener process
 			this.trans = "wiener";
-			this.wiener.nrv = MVN( [0], [[1]] ).sample;
+			this.wiener.gen = MVN( [0], [[1]] );
 			Trace("wiener process experimental");
 		}
 		
@@ -419,7 +419,7 @@ class RAN {
 								A[i][j] = dot * weights[i] * weights[j]
 							});
 
-						gen[k] = MVN( mu, sigma ).sample;
+						gen[k] = MVN( mu, sigma );
 					});
 				
 				this.K = K;
@@ -432,7 +432,7 @@ class RAN {
 					sigma = emP.sigma || emP.cov,		// covar matricies
 					K = this.K = mu.length,		// #mixes, dim(mu[k]) = D = vector dim
 					parm = emP.parm = $(K, (k,p) => p[k] = {mu: mu[k], sigma: sigma[k]} ),
-					gen = emP.gen = $(K, (k,g) => g[k] = MVN( parm[k].mu, parm[k].sigma ).sample );
+					gen = emP.gen = $(K, (k,g) => g[k] = MVN( parm[k].mu, parm[k].sigma ) );
 			}
 			
 			else  { // derived [(mean,sigma), ....] using cholesky decomp
@@ -462,44 +462,47 @@ class RAN {
 								gen: $(K),
 								parm: $(K)
 							},
-							xR = $.multiply( $.randRot(N), mu );
+							muR = $.multiply( $.randRot(N), mu );		// rotated mu
 						
 						const {random,cos,sin,PI} = Math;
 						const {gen,parm} = rvg;
 						
 						gen.$( n => {
-							if ( cone ) {	// stay on cone of given angle from xR
+							if ( cone ) {	// stay on cone of given angle from muR
+								var vmctx = {
+	muR: $.list(muR),
+	theta: 	cone*(PI/180),
+	phi: 2*random() - 1
+};
+								// dont forget sin -> tan
 								const {xG} = $(`
-xR = squeeze(xR);
-a = norm( xR ) * sin(theta);
-N = len(xR);
+mu = squeeze(muR);
+a = norm( mu ) * sin(theta);
+N = len(mu);
 V = rand(N,3);
-V[:,1] = xR;
+V[:,1] = mu;
 U = orthoNorm(V);
 u = squeeze( U[:,2] );
 v = squeeze( U[:,3] );
 delta = a*( cos(phi) * u + sin(phi) * v );
-xG = squeeze(xR) + delta;
-`, {
-	xR: $.list(xR),
-	theta: 	cone*(PI/180),
-	phi: 2*random() - 1
-});
+xG = squeeze(mu) + delta;
+`, vmctx );
 
 								parm[n] = {
-									mu: $.list( xG ),
-									sigma: $.list( sigma )
+									mu: $.list( xG ),		// mean	
+									sigma: $.list( sigma )		// covar
 								};
 							}
 							
 							else  // completely random
 								parm[n] = {
-									mu: $.list( n ? $.multiply( $.randRot(N), xR ) : xR ),
-									sigma: $.list( sigma )
+									mu: $.list( n ? $.multiply( $.randRot(N), muR ) : muR ),		// mean
+									sigma: $.list( sigma )		//. covar
 								};
 							
 							try {
-								gen[n] = MVN( parm[n].mu, parm[n].sigma ).sample;
+								Log(">>>gen", n, parm[n], vmctx);
+								gen[n] = MVN( parm[n].mu, parm[n].sigma );
 							}
 							catch (err) {
 								Trace("invalid MVN parameters");
@@ -882,7 +885,7 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 					var 
 						wiener = ran.wiener,
 						M = wiener.walks,
-						nrv = wiener.nrv;
+						nrv = wiener.gen.sample;
 
 					for (var j=1, walks=floor(M*t); j<=walks; j++) u += nrv()[0];
 
@@ -979,11 +982,13 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 				UN[ n ] [ k ]++; 		// # times U[n] in state k; for computing cond probs
 			});
 			
-			if ( emP ) 
+			if ( emP ) {
+				var gen = emP.gen;
 				U.$( n => {
 					//Log(n,U[n], n % K, K);
-					emP.obs[n] = emP.gen[ n % K ]();
+					emP.obs[n] = gen[ n % K ].sample();
 				});
+			}
 		}
 	
 		else  // stateless process
