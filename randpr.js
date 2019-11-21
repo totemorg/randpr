@@ -474,8 +474,8 @@ class RAN {
 	theta: 	cone*(PI/180),
 	phi: 2*random() - 1
 };
-								// dont forget sin -> tan
-								const {xG} = $(`
+
+/*
 mu = squeeze(muR);
 a = norm( mu ) * sin(theta);
 N = len(mu);
@@ -485,11 +485,24 @@ U = orthoNorm(V);
 u = squeeze( U[:,2] );
 v = squeeze( U[:,3] );
 delta = a*( cos(phi) * u + sin(phi) * v );
-xG = squeeze(mu) + delta;
+muG = squeeze(mu) + delta;
+*/
+								// dont forget sin -> tan
+								const {muG} = $(`
+mu = squeeze(muR);
+a = norm( mu ) * sin(theta);
+N = len(mu);
+V = rand(N,3);
+V[:,1] = mu;
+U = orthoNorm(V);
+u = squeeze( U[:,2] );
+v = squeeze( U[:,3] );
+delta = a*( cos(phi) * u + sin(phi) * v );
+muG = squeeze(mu) + delta;
 `, vmctx );
 
 								parm[n] = {
-									mu: $.list( xG ),		// mean	
+									mu: $.list( muG ),		// mean	
 									sigma: $.list( sigma )		// covar
 								};
 							}
