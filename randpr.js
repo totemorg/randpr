@@ -462,44 +462,38 @@ class RAN {
 								gen: $(K),
 								parm: $(K)
 							},
-							muR = $.multiply( $.randRot(N), mu );		// rotated mu
-						
+							mu0 = $.multiply( $.randRot(N), mu );		// randomly rotated mu
+
 						const {random,cos,sin,PI} = Math;
 						const {gen,parm} = rvg;
 						
 						gen.$( n => {
-							if ( cone ) {	// stay on cone of given angle from muR
-								var vmctx = {
-	muR: $.list(muR),
-	theta: 	cone*(PI/180),
-	phi: 2*random() - 1
-};
+							if ( cone && cone<90 ) {	// stay on cone of given angle from mu0
+								var 
+									vmctx = {
+										N: N,
+										mu0: $.list($.squeeze(mu0)),
+										theta: 	cone*(PI/180),
+										phi: 2*random() - 1
+									},
+									vm3 = `
+a = sqrt( mu0 * mu0 ) * tan(theta);
+V = rand(N,3);
+V[:,1] = mu0;
+U = orthoNorm(V);
+u = squeeze( U[:,2] );
+v = squeeze( U[:,3] );
+delta = a*( cos(phi*pi) * u + sin(phi*pi) * v );
+muG = squeeze(mu0) + delta;
+` ,
+									vm2 = `
+a = sqrt( mu0 * mu0 );
+thetaG = acos( mu0[1] ) + (theta/2)*phi;
+muG = a * [ cos(thetaG), sin(thetaG) ];
+`;
+									
 
-/*
-mu = squeeze(muR);
-a = norm( mu ) * sin(theta);
-N = len(mu);
-V = rand(N,3);
-V[:,1] = mu;
-U = orthoNorm(V);
-u = squeeze( U[:,2] );
-v = squeeze( U[:,3] );
-delta = a*( cos(phi) * u + sin(phi) * v );
-muG = squeeze(mu) + delta;
-*/
-								// dont forget sin -> tan
-								const {muG} = $(`
-mu = squeeze(muR);
-a = norm( mu ) * sin(theta);
-N = len(mu);
-V = rand(N,3);
-V[:,1] = mu;
-U = orthoNorm(V);
-u = squeeze( U[:,2] );
-v = squeeze( U[:,3] );
-delta = a*( cos(phi) * u + sin(phi) * v );
-muG = squeeze(mu) + delta;
-`, vmctx );
+								const {muG} = $( (N>2) ? vm3 : vm2, vmctx );
 
 								parm[n] = {
 									mu: $.list( muG ),		// mean	
@@ -509,12 +503,11 @@ muG = squeeze(mu) + delta;
 							
 							else  // completely random
 								parm[n] = {
-									mu: $.list( n ? $.multiply( $.randRot(N), muR ) : muR ),		// mean
+									mu: $.list( $.squeeze( n ? $.multiply( $.randRot(N), mu0 ) : mu0  )),		// mean
 									sigma: $.list( sigma )		//. covar
 								};
 							
 							try {
-								Log(">>>gen", n, parm[n], vmctx);
 								gen[n] = MVN( parm[n].mu, parm[n].sigma );
 							}
 							catch (err) {
