@@ -4,8 +4,8 @@
   "description": "",
   "main": "randpr.js",
   "scripts": {
-	  "prmprep": "source ./maint.sh prmput",
-	  "prmload": "source ./maint.sh prmget",	 
+    "prmprep": "source ./maint.sh prmput",
+    "prmload": "source ./maint.sh prmget",
     "test": "node randpr.js "
   },
   "repository": {
