@@ -2,80 +2,11 @@
 
 'use strict';
 /**
-@class RAN
+[Usage](https://totem.west.ile.nga.ic.gov/randpr)
+
+@module RANDPR
 @requires stream
 @requires man
-
-Generate or learn various random processes.
-
-Bayes:
-
-	K-state process governed by a prescribed conditional independency network:
-	
-		eqP: [pr, ...] the K equilibrium probs 
-		net: [ {var: probs, ...}, ... ] the conditional dependencies 
-		
-	or expressed as a DAG:
-	
-		dag: { ... }
-	
-Gillespie:
-
-	Inhomogenious K-state process with specified transition probabilties:
-	
-		states: number of states
-		
-	where its K^2 transition probs are synthesized using the gillespie model.
-	
-Markov:
-
-	K-state process with specified transition probabilities:
-	
-		TxPrs: [ [...], ....] the K^2 (K^2-K independent) transition probs 
-		
-	or:
-	
-		states: K
-		TxPrs: { from: {to: pr, ... } , ... "from, ..." : "to, ..." }	
-		
-	where from-to transition probs must be specified to conserve prob, i.e. sum_k TxPrs[n][k] = 1.
-
-Gauss:
-
-	Correlated, stateless random process whose parameters are typically derived (see man) 
-	for a process with known correlation intervals M = T/Tc or SNR = sqrt{ M / ( 1 + deltaC / M) }.
-
-		values: [ ... ] pc eigen values  [unitless]
-		vectors: [ [... ], ...] pc eigen values	[sqrt Hz]
-		ref: reference eigenvalue 
-		dim: max pc dimension (M = T/Tc )
-		mean: mean count in observation interval T
-
-Wiener:
-
-	Stateless process with moving 2nd moment (but stationary in 1st increments) where:
-	
-		walks: number of walks at each time step (0 disables)
-		
-	This still needs a quick debug.  May need to define	false Markov parms to init it.
-	
-Ornstein: 
-
-	Stateless Ornstein-Ulenbeck process with:
-	
-		theta: 0-pi
-		a: sigma/sqrt(2 theta)
-		
-Mixing:
-
-	Gauss mixing process with specified mu,sigma (mean, covar), or specified snr, cone, mixes, oncov, offcov
-
-refs:
-www.statslab.cam.ac.uk/~rrw1
-www.stat.yale.edu/~pollard
-people.math.gatech.edu/~randall
-www.stat.berkeley.edu/~pitman
-www.math.dartmouth.edu/~pw
 **/
 
 var			
