@@ -2,7 +2,7 @@
 
 'use strict';
 /**
-[Usage](https://totem.west.ile.nga.ic.gov/randpr)
+[Installation and Usage](https://sc.appdev.proj.coe/acmesds/randpr)
 
 @module RANDPR
 @requires stream

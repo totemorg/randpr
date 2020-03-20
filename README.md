@@ -1,13 +1,33 @@
 /**
-@class RANDPR
-	[SourceForge](https://sourceforge.net) 
-	[github](https://github.com/acmesds/debe.git) 
-	[geointapps](https://git.geointapps.org/acmesds/debe)
-	[gitlab](https://gitlab.weat.nga.ic.gov/acmesds/debe.git)
-	
+[SourceForge](https://sourceforge.net) 
+[github](https://github.com/acmesds/debe.git) 
+[geointapps](https://git.geointapps.org/acmesds/debe)
+[gitlab](https://gitlab.weat.nga.ic.gov/acmesds/debe.git)
+[nsa](https://sc.appdev.proj.coe/acmesds/randpr)
+
 # RANDPR
 
 Generate or learn various random processes.
+
+In its generation mode, RANDPR will generate a first-order, K-state Markov process given 
+its first-order, KxK transition probabilites.  RANDPR also computes equilibrium probabilities (if they 
+exist), mean recurrence times, time to first absorption, absorption probabilites and the statistical 
+auto-covariance function.  RANDPR can create ergodic, regular, absorptive processes, Weiner 
+(stationary in first increments), and wide-sense stationary processes.
+
+In its learning mode, RANDPR produces supervised and unsupervised estimates:
+MLEs of the underlying transition probabilities, number of coherence intervals (and related SNR),
+and the underlying intensity profile.  (MLE for the Weiner process, e.g. first time to exit, have not 
+yet been implemented).
+
+Both discrete- and continious-time models are supported in either forward or reverse mode.  
+
+RANDPR can be customized with onStep(), onBatch(), onEnd(), and filter() methods to 
+sample metrics in both forward and reverse modes.  Both modes can make use of piped 
+streams to minimize memory usage.
+
+RANDPR supports the following processes.
+
 
 Bayes:
 
@@ -70,25 +90,6 @@ Ornstein:
 Mixing:
 
 	Gauss mixing process with specified mu,sigma (mean, covar), or specified snr, cone, mixes, oncov, offcov
-
-In its markov generation mode, RANDPR will generate a first-order, K-state Markov process given 
-its first-order, KxK transition probabilites.  RANDPR also computes equilibrium probabilities (if they 
-exist), mean recurrence times, time to first absorption, absorption probabilites and the statistical 
-auto-covariance function.  RANDPR can create ergodic, regular, absorptive processes, Weiner 
-(stationary in first increments), and wide-sense stationary processes.
-
-In its markov learning mode, RANDPR produces supervised and unsupervised estimates:
-MLEs of the underlying transition probabilities, number of coherence intervals (and related SNR),
-and the underlying intensity profile.  (MLE for the Weiner process, e.g. first time to exit, have not 
-yet been implemented).
-
-Both discrete- and continious-time models are supported in either forward or reverse mode.  
-
-RANDPR can be customized with onStep(), onBatch(), onEnd(), and filter() methods to 
-sample metrics in both forward and reverse modes.  Both modes can make use of piped 
-streams to minimize memory usage.
-
-RANDPR also supports ornstein, bayes, gillespie, and weiner processes.
 
 # Refs:
 	www.statslab.cam.ac.uk/~rrw1
