@@ -368,7 +368,7 @@ class RAN {
 			
 			else  { // derived [(mean,sigma), ....] using cholesky decomp
 				var ctx = Copy( emP, {	// defaults
-					decomp: "default",	// defines [ (mu,sigma), ... ] generators
+					decomp: "",	// defines [ (mu,sigma), ... ] generator
 					snr: 1,			// desired s/n
 					cone: 0,		// randomize means on cone of angle [degs] (0=free)
 					mixes: 2,		// mixes
@@ -378,12 +378,15 @@ class RAN {
 				});	// define gen context
 				
 				$({ // import these
-					len: A => A._size[0],
+					//len: A => A._size[0],
 					fiddle: (L,offcov) => {
-						var k = 0,  _L = $.list(L), _offcov = $.list(offcov);
+						var 
+							k = 0,  
+							L = L._data || L, 
+							N = L.length;
 						
-						return _offcov
-							? $.matrix( $( L._size, (i,j, A) => A[i][j] = ( i > j ) ? _offcov[k++] || 0 : _L[i][j] ) )
+						return offcov
+							? $( N, (i,j, A) => A[i][j] = ( i > j ) ? offcov[k++] || 0 : L[i][j] )
 							: L;
 					},
 					rvgen: (K,mu,sigma,cone) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
@@ -403,7 +406,7 @@ class RAN {
 								var 
 									vmctx = {
 										N: N,
-										mu0: $.list($.squeeze(mu0)),
+										mu0: $.squeeze(mu0),
 										theta: 	cone*(PI/180),
 										phi: 2*random() - 1
 									},
@@ -427,15 +430,15 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 								const {muG} = $( (N>2) ? vm3 : vm2, vmctx );
 
 								parm[n] = {
-									mu: $.list( muG ),		// mean	
-									sigma: $.list( sigma )		// covar
+									mu: $.toList( muG ),		// mean	
+									sigma: sigma		// covar
 								};
 							}
 							
 							else  // completely random
 								parm[n] = {
-									mu: $.list( $.squeeze( n ? $.multiply( $.randRot(N), mu0 ) : mu0  )),		// mean
-									sigma: $.list( sigma )		//. covar
+									mu: $.toList( $.squeeze( n ? $.multiply( $.randRot(N), mu0 ) : mu0  ) ),		// mean
+									sigma: sigma		//. covar
 								};
 							
 							try {
@@ -450,8 +453,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				});
 				
 				var
-					decomps = {
-						default: `
+					decomp = ctx.decomp || `
 N = dim ? dim : len( oncov ); 
 D = diag( dim ? ones(N) : oncov ); 
 g = N / log2(mixes);
@@ -460,8 +462,7 @@ sigma =  L * D * L';
 mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
 rvg = rvgen(mixes, mu, sigma, cone);
 snr0 = norm(mu)/sqrt(sum(diag(sigma)));
-`					},
-					decomp = decomps[  ctx.decomp || "default" ] || ctx.decomp || decomps.default;
+`;
 				
 				const {mixes,dim,sigma,D,L,rvg,snr,cone,g} = Copy( $( decomp, ctx), emP );
 				
@@ -481,7 +482,7 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 				// Log("sigma", ctx.sigma, "D", D, "L", L);
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
-			
+			// offcov 8d4m  "offcov": [0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1, 0.3, 0.2, 0.1, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.1]
 			emP.obs = $(N);		// reserve observations
 		}
 
@@ -798,17 +799,17 @@ snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 
 					else {	// use KL expansion to generate count sample from arrivial rate process 
 						var
-							B = $.matrix( $(N, (n,B) => {  // generate KL coefficients [events]
+							B = $(N, (n,B) => {  // generate KL coefficients [events]
 								var 
 									Bmod = sqrt( expdev( mean * vals[n] / ref ) ),  
 									Barg = random() * PI;
 
 								//if (t == 0)  Log( t , n , N, vals[n] / ref , mean, Bmod);
 								B[n] = $.complex( Bmod * cos(Barg), Bmod * sin(Barg) );  
-							}) ),
-							V = $.matrix( $(N, (n,V) => {  // get KL eigen vector at time t [sqrt Hz]
+							}),
+							V = $(N, (n,V) => {  // get KL eigen vector at time t [sqrt Hz]
 								V[n] = vecs[n][t];  // t index = 0:N samples vectors at t = -T/2 : T/2
-							}) ),
+							}),
 							A = $.dot( B, V),  // complex analytic function representing event rate process [sqrt Hz]
 							lambda = $.abs(A)**2,  // event rate process [Hz]
 							k = lambda * dt;  // [events]
@@ -1327,14 +1328,14 @@ function firstAbsorb(P) {  //< compute first absorption times, probs and states
 				kTr.push(k+1);
 		}),
 		ctx = {
-			P: $.matrix(P),
+			P: P,
 			K: K,
-			kAb: $.matrix(kAb),
-			kTr: $.matrix(kTr),
+			kAb: kAb,
+			kTr: kTr,
 			nAb: kAb.length,
 			nTr: kTr.length,
-			abT: $.matrix([]),
-			abP: $.matrix([])
+			abT: [],
+			abP: []
 		};
 	
 	//Log("ab ctx", JSON.stringify(ctx));
@@ -1382,7 +1383,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 
 	var 
 		ctx = {
-			P: $.matrix(P),
+			P: P,
 			K: P.length
 		},
 		K = ctx.K;
@@ -1401,7 +1402,7 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 			$("wk= -Pu*inv(A);", ctx);
 
 			//Log("man meanRecurTimes", ctx);
-			ctx.w = $.matrix([1].concat(ctx.wk[0]));
+			ctx.w = [1].concat(ctx.wk[0]);
 
 			$("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
 
