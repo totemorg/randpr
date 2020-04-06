@@ -53,7 +53,6 @@ class RAN {
 			
 			learn: null, 	// learner(supercb) calls back supercb(evs) || supercb(null,onend)
 
-			filter: function (str,ev,ran) {  // filter output event ev to store/stream str
 			/**
 			Output event filter
 				filter: function (str, ev, ran) { // event ev for stream/store str
@@ -64,6 +63,7 @@ class RAN {
 						}
 					}  
 			*/
+			filter: function (str,ev,ran) {  // filter output event ev to store/stream str
 				str.push( ev ); 
 			},
 
