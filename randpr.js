@@ -374,22 +374,29 @@ class RAN {
 					mixes: 2,		// mixes
 					offcov: null,		// off-diag covars
 					dim: 0,				// vector dim 
-					oncov: [1,1,1]		// on-diag covars if dim=0
+					oncov: null		// on-diag covars if dim=0
 				});	// define gen context
 				
 				$({ // import these
-					//len: A => A._size[0],
-					fiddle: (L,offcov) => {
+					LU: offdiag => {		// upper nontriangular matrix for cholesky
 						var 
-							k = 0,  
-							L = L._data || L, 
-							N = L.length;
+							N = offdiag.length+1;
 						
-						return offcov
-							? $( N, (i,j, A) => A[i][j] = ( i > j ) ? offcov[k++] || 0 : L[i][j] )
-							: L;
+						return $( [N,N], (i,j,A) => {
+							if ( k = j-i )
+								if ( k > 0 )
+									A[i][j] = offdiag[k-1][i];
+								else
+									A[i][j] = 0;
+
+							else
+								A[i][j] = 1;
+						});
 					},
+					
 					rvgen: (K,mu,sigma,cone) => {		// return K rvg generators(mu,sigma) with mean mu and covar sigma
+						const {random,cos,sin,PI,floor} = Math;
+						
 						var 
 							N = $.len(mu),	// vector dim
 							rvg = {
@@ -398,10 +405,12 @@ class RAN {
 							},
 							mu0 = $.multiply( $.randRot(N), mu );		// randomly rotated mu
 
-						const {random,cos,sin,PI} = Math;
 						const {gen,parm} = rvg;
 						
 						gen.$( n => {
+							
+							var m = floor(random()*N);
+
 							if ( cone && cone<90 ) {	// stay on cone of given angle from mu0
 								var 
 									vmctx = {
@@ -455,23 +464,25 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				var
 					decomp = ctx.decomp || `
 N = dim ? dim : len( oncov ); 
-D = diag( dim ? ones(N) : oncov ); 
+D = dim ? ones(N) : oncov; 
 g = N / log2(mixes);
-L = fiddle( diag( ones(N) ), offcov );
-sigma =  L * D * L'; 
-mu = concat( [1], zeros(N-1) ) * snr * sqrt(sum(diag(sigma))); 
+L = isNull(offcov) ? 0 : LU( offcov );
+sigma =  isNull(offcov) ? diag(D) : L * diag(D) * L'; 
+mu = zeros(N); mu[ floor(random(1)*N) ] = 1;
+mu = mu * snr * sqrt(sum(diag(sigma))); 
 rvg = rvgen(mixes, mu, sigma, cone);
 snr0 = norm(mu)/sqrt(sum(diag(sigma)));
 `;
 				
-				const {mixes,dim,sigma,D,L,rvg,snr,cone,g} = Copy( $( decomp, ctx), emP );
+				const {mixes,dim,sigma,D,L,rvg,snr,cone,g,mu} = Copy( $( decomp, ctx), emP );
 				
 				Log({
 					cone: cone, 
 					mixes: mixes, 
 					snr: snr,
 					gain: g,
-					rvg: rvg
+					mu: mu,
+					sol: JSON.stringify(rvg.parm)
 				});
 				
 				var K = this.K = mixes;
