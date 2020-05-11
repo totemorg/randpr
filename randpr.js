@@ -368,7 +368,17 @@ class RAN {
 			
 			else  { // derived [(mean,sigma), ....] using cholesky decomp
 				var ctx = Copy( emP, {	// defaults
-					decomp: "",	// defines [ (mu,sigma), ... ] generator
+					decomp: `
+N = dim ? dim : len( oncov ); 
+D = dim ? ones(N) : oncov; 
+g = N / log2(mixes);
+L = isNull(offcov) ? 0 : LU( offcov );
+sigma =  isNull(offcov) ? diag(D) : L * diag(D) * L'; 
+mu = zeros(N); mu[ floor(random(1)*N) ] = 1;
+mu = mu * snr * sqrt(sum(diag(sigma))); 
+rvg = rvgen(mixes, mu, sigma, cone);
+snr0 = norm(mu)/sqrt(sum(diag(sigma)));
+`,	// defines [ (mu,sigma), ... ] generator
 					snr: 1,			// desired s/n
 					cone: 0,		// randomize means on cone of angle [degs] (0=free)
 					mixes: 2,		// mixes
@@ -408,7 +418,6 @@ class RAN {
 						const {gen,parm} = rvg;
 						
 						gen.$( n => {
-							
 							var m = floor(random()*N);
 
 							if ( cone && cone<90 ) {	// stay on cone of given angle from mu0
@@ -440,17 +449,18 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 								parm[n] = {
 									mu: $.toList( muG ),		// mean	
-									sigma: sigma		// covar
+									sigma: $.toList(sigma)		// covar
 								};
 							}
 							
 							else  // completely random
 								parm[n] = {
 									mu: $.toList( $.squeeze( n ? $.multiply( $.randRot(N), mu0 ) : mu0  ) ),		// mean
-									sigma: sigma		//. covar
+									sigma: $.toList(sigma)		//. covar
 								};
 							
 							try {
+								//Log(n, parm[n]);
 								gen[n] = MVN( parm[n].mu, parm[n].sigma );
 							}
 							catch (err) {
@@ -461,28 +471,26 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					}
 				});
 				
-				var
-					decomp = ctx.decomp || `
-N = dim ? dim : len( oncov ); 
-D = dim ? ones(N) : oncov; 
-g = N / log2(mixes);
-L = isNull(offcov) ? 0 : LU( offcov );
-sigma =  isNull(offcov) ? diag(D) : L * diag(D) * L'; 
-mu = zeros(N); mu[ floor(random(1)*N) ] = 1;
-mu = mu * snr * sqrt(sum(diag(sigma))); 
-rvg = rvgen(mixes, mu, sigma, cone);
-snr0 = norm(mu)/sqrt(sum(diag(sigma)));
-`;
-				
-				const {mixes,dim,sigma,D,L,rvg,snr,cone,g,mu} = Copy( $( decomp, ctx), emP );
+				const {mixes,dim,sigma,D,L,rvg,snr,cone,g,mu} = Copy( $( ctx.decomp, ctx), emP );
+
+				/*
+				var 
+					N = sigma.length,
+					X = $([N,N], (i,j,X) => X[i][j] = (j==1) ? sigma[i][0] : sigma[i][j] );
+				*/
 				
 				Log({
+					dim: dim,
 					cone: cone, 
 					mixes: mixes, 
 					snr: snr,
 					gain: g,
 					mu: mu,
-					sol: JSON.stringify(rvg.parm)
+					sigma: sigma,
+					det: $.det( $.toMatrix(sigma) )
+					//Xsigma: X,
+					//Xdet: $.det( $.toMatrix(X) ),
+					//parms: JSON.stringify(rvg.parm)
 				});
 				
 				var K = this.K = mixes;
