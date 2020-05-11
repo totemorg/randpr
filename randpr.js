@@ -471,6 +471,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					}
 				});
 				
+				//Log(">>>>>ctx", ctx);
 				const {mixes,dim,sigma,D,L,rvg,snr,cone,g,mu} = Copy( $( ctx.decomp, ctx), emP );
 
 				/*
