@@ -374,11 +374,15 @@ D = dim ? ones(N) : oncov;
 g = N / log2(mixes);
 L = isNull(offcov) ? 0 : LU( offcov );
 sigma =  isNull(offcov) ? diag(D) : L * diag(D) * L'; 
-mu = zeros(N); mu[ floor(random(1)*N) ] = 1;
+mu = zeros(N,1); mu[ floor(random(1)*N),1 ] = 1;
 mu = mu * snr * sqrt(sum(diag(sigma))); 
 rvg = rvgen(mixes, mu, sigma, cone);
-snr0 = norm(mu)/sqrt(sum(diag(sigma)));
+snr0 = sqrt(sum(squeeze(mu'*mu)))/sqrt(sum(diag(sigma)));
 `,	// defines [ (mu,sigma), ... ] generator
+/*
+snr0 = norm(mu)/sqrt(sum(diag(sigma)));
+*/
+					
 					snr: 1,			// desired s/n
 					cone: 0,		// randomize means on cone of angle [degs] (0=free)
 					mixes: 2,		// mixes
