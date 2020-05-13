@@ -370,18 +370,16 @@ class RAN {
 				var ctx = Copy( emP, {	// defaults
 					decomp: `
 N = dim ? dim : len( oncov ); 
-D = dim ? ones(N) : oncov; 
+D = matrix( dim ? ones(N) : oncov ); 
 g = N / log2(mixes);
-L = isNull(offcov) ? 0 : LU( offcov );
-sigma =  isNull(offcov) ? diag(D) : L * diag(D) * L'; 
-mu = zeros(N,1); mu[ floor(random(1)*N),1 ] = 1;
+L = isNull(offcov) ? 1 : LU( offcov );
+sigma = isNull(offcov) ? diag(D) : L * diag(D) * L'; 
+mu = zeros(N,1); 
+mu[ floor(1+random(1)*N),1 ] = 1;
 mu = mu * snr * sqrt(sum(diag(sigma))); 
 rvg = rvgen(mixes, mu, sigma, cone);
 snr0 = sqrt(sum(squeeze(mu'*mu)))/sqrt(sum(diag(sigma)));
 `,	// defines [ (mu,sigma), ... ] generator
-/*
-snr0 = norm(mu)/sqrt(sum(diag(sigma)));
-*/
 					
 					snr: 1,			// desired s/n
 					cone: 0,		// randomize means on cone of angle [degs] (0=free)
@@ -493,9 +491,6 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					mu: mu,
 					sigma: sigma,
 					det: $.det( $.toMatrix(sigma) )
-					//Xsigma: X,
-					//Xdet: $.det( $.toMatrix(X) ),
-					//parms: JSON.stringify(rvg.parm)
 				});
 				
 				var K = this.K = mixes;
@@ -872,97 +867,100 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 			trans = transitions[ ran.trans ];
 				
-		U.$( n => U1[n] = U[n] );  // hold current states/values
-		
-		if (evs) { // in learning mode 
-			/*
-			if ( !t ) { // initialize states at t=0
-				ran.gamma[0] = 1;  // force
-				evs.forEach( ev => {
-					var n = ev[keys.index];		// ensemble index
-					U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
-				});
+		if ( trans ) {
+			U.$( n => U1[n] = U[n] );  // hold current states/values
+
+			if (evs) { // in learning mode 
+				/*
+				if ( !t ) { // initialize states at t=0
+					ran.gamma[0] = 1;  // force
+					evs.forEach( ev => {
+						var n = ev[keys.index];		// ensemble index
+						U[ n ] = symbols[ev[keys.state]] || 0;  // state (0 if hidden)
+					});
+					U.$( n => {
+						U0[n] = U1[n] = U[n];		// initialize states
+						UK[n] = -1;  // force initial jump counter to 0
+					}); 
+				} */
+
+				// latch (assume time-ordered) events to ensemble
+
+				t = this.t = evs[0].t;	
+
+				if (K) // categorical process so latch states
+					evs.forEach(ev => {	// set states (if supervised) or symbols[0] (if hidden)
+						U[ ev[keys.index] || 0 ] = symbols[ ev[keys.value] || 0 ];
+					});
+
+				else // stateless process so latch values
+					evs.forEach(ev => {  // set values (if supervised) or 0 (if hidden)
+						U[ ev[keys.index] || 0 ] = ev[keys.value] || 0;
+					});				
+			}
+
+			else  { // in generative mode
 				U.$( n => {
-					U0[n] = U1[n] = U[n];		// initialize states
-					UK[n] = -1;  // force initial jump counter to 0
-				}); 
-			} */
-
-			// latch (assume time-ordered) events to ensemble
-			
-			t = this.t = evs[0].t;	
-			
-			if (K) // categorical process so latch states
-				evs.forEach(ev => {	// set states (if supervised) or symbols[0] (if hidden)
-					U[ ev[keys.index] || 0 ] = symbols[ ev[keys.value] || 0 ];
-				});
-			
-			else // stateless process so latch values
-				evs.forEach(ev => {  // set values (if supervised) or 0 (if hidden)
-					U[ ev[keys.index] || 0 ] = ev[keys.value] || 0;
-				});				
-		}
-
-		else  { // in generative mode
-			U.$( n => {
-				U[ n ] = trans( t , U[n] );
-			});
-		}
-		
-		// Log(t, U.join(" "));
-		
-		// update process counters
-		
-		if (K)  { // categorical process
-			this.gamma[s] = this.statCorr();		
-
-			U.$( n => {  // adjust jump counters
-				var
-					frState = U1[n],
-					toState = U[n];
-
-				if ( frState != toState) { // jump if state changed
-					var
-						held = t - UH[n],	// initially 0 and remains 0 in discrete-time mode
-						hold = this.ctmode ? expdev( 1/A[frState][toState] ) : 0 ;  // draw expected holding time
-
-					cumH[frState][toState] += held; // cummulative holding time in from-to jump
-					cumN[frState][toState] ++;  // cummulative number of from-to jumps
-					
-					NR[frState][frState] = hold;  // update expected holding time 
-					UH[ n ] = t + hold;    // advance to next jump time (hold is 0 in discrete time mode)
-					UK[ n ]++; 		// increment jump counter
-
-					ran.onJump(n, toState, hold ); 	// callback with jump info
-				}
-			});	
-			
-			U.$( n => {   // adjust state counters
-				var k = U[n]; 				// state
-				N0[ U0[n] ][ k ]++; 	// initial-to counters for computing ensemble correlations
-				N1[ U1[n] ][ k ]++;		// from-to counters for computing trans probs
-				UN[ n ] [ k ]++; 		// # times U[n] in state k; for computing cond probs
-			});
-			
-			if ( emP ) {
-				var gen = emP.gen;
-				U.$( n => {
-					//Log(n,U[n], n % K, K);
-					emP.obs[n] = gen[ n % K ].sample();
+					U[ n ] = trans( t , U[n] );
 				});
 			}
+
+			// Log(t, U.join(" "));
+
+			// update process counters
+
+			if (K)  { // categorical process
+				this.gamma[s] = this.statCorr();		
+
+				U.$( n => {  // adjust jump counters
+					var
+						frState = U1[n],
+						toState = U[n];
+
+					if ( frState != toState) { // jump if state changed
+						var
+							held = t - UH[n],	// initially 0 and remains 0 in discrete-time mode
+							hold = this.ctmode ? expdev( 1/A[frState][toState] ) : 0 ;  // draw expected holding time
+
+						cumH[frState][toState] += held; // cummulative holding time in from-to jump
+						cumN[frState][toState] ++;  // cummulative number of from-to jumps
+
+						NR[frState][frState] = hold;  // update expected holding time 
+						UH[ n ] = t + hold;    // advance to next jump time (hold is 0 in discrete time mode)
+						UK[ n ]++; 		// increment jump counter
+
+						ran.onJump(n, toState, hold ); 	// callback with jump info
+					}
+				});	
+
+				U.$( n => {   // adjust state counters
+					var k = U[n]; 				// state
+					N0[ U0[n] ][ k ]++; 	// initial-to counters for computing ensemble correlations
+					N1[ U1[n] ][ k ]++;		// from-to counters for computing trans probs
+					UN[ n ] [ k ]++; 		// # times U[n] in state k; for computing cond probs
+				});
+
+				if ( emP ) {
+					var gen = emP.gen;
+					U.$( n => {
+						//Log(n,U[n], n % K, K);
+						emP.obs[n] = gen[ n % K ].sample();
+					});
+				}
+			}
+
+			else  // stateless process
+				U.$( n => {   // adjust counters
+					UK[ n ] += U[ n ];
+				});
+
+			//Log( (t<10) ? "0"+t : t, U.join(""));
+			//if (t<50) Log( t<10 ? "0"+t : t,U,UK);		
+			//if (t<5) Log(t,N0);
+
+			this.onStep();
 		}
-	
-		else  // stateless process
-			U.$( n => {   // adjust counters
-				UK[ n ] += U[ n ];
-			});
-			
-		//Log( (t<10) ? "0"+t : t, U.join(""));
-		//if (t<50) Log( t<10 ? "0"+t : t,U,UK);		
-		//if (t<5) Log(t,N0);
 		
-		this.onStep();
 		this.t += this.dt;
 		this.s++;
 	}
