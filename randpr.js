@@ -490,7 +490,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					gain: g,
 					mu: mu,
 					sigma: sigma,
-					det: $.det( $.toMatrix(sigma) )
+					det: $.det( sigma )
 				});
 				
 				var K = this.K = mixes;
@@ -502,7 +502,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
 			// offcov 8d4m  "offcov": [0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1, 0.3, 0.2, 0.1, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.1]
-			emP.obs = $(N);		// reserve observations
+			emP.obs = $(N);		// reserve observation ensemble
 		}
 
 		// define our state symbole
