@@ -218,7 +218,7 @@ class RAN {
 						pa: [.9, .1],
 						pb: [.2, .8]					
 					}
-				}
+				},
 					
 				net = nets[ this.bayes.class ] || {};
 				
