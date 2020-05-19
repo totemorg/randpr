@@ -33,7 +33,7 @@ class RAN {
 			
 			gauss: null, // (t) => state method
 			gillespie: 0, // number of states to reserve
-			bayes: null, // K eq state probs [....]
+			bayes: null, // Baysian belief net { states:[...], vars:{X:"Y,...", Y:"Z,...", ...}, pX_Y: {...}, pZ: [...] }
 			mixing: null, // {mu: [mean,...], sigma: [covar,...], dims: [dim, ....] } xyz-emmision probs
 		
 			// ensemble parameters
@@ -185,8 +185,45 @@ class RAN {
 		}
 		
 		else
-		if ( this.bayes ) {   // bayesian network
+		if ( this.bayes ) {   // bayesian belief network (aka conditional markov field, a special mcmc)
 			this.trans = "bayes";
+			
+			var 
+				nets = {
+					t1s2: {
+						states: [0, 1],
+						vars: {a: "x", b: "x", x: "" },
+						type: "a<-x->b",
+						pa_x: {
+							"0": [.4, .6],
+							"1": [.7, .3]
+						},
+						pb_x: {
+							"0": [.9, .1],
+							"1": [.5, .5]
+						},
+						px: [.2, .8]
+					},
+
+					t2s2: {
+						states: [0, 1],
+						vars: {a: "", b: "", x: "a,b" },
+						type: "a<-x->b",
+						px_ab: {
+							"0,0": [.4, .6],
+							"0,1": [.7, .3],
+							"1,0": [.4, .6],
+							"1,1": [.7, .3]
+						},
+						pa: [.9, .1],
+						pb: [.2, .8]					
+					}
+				}
+					
+				net = nets[ this.bayes.class ] || {};
+				
+			this.bayes = Copy( this.bayes, net );
+			/*
 			var 
 				bayes = this.bayes,
 				dag = bayes.dag, 
@@ -286,11 +323,12 @@ class RAN {
 					});
 				});
 			
-			Log("bayes", N, K, dims, alpha, theta, count, G);			
+			Log("bayes", N, K, dims, alpha, theta, count, G);	
+			*/
 		}
 		
 		else
-		if ( this.gillespie) {	// gillespie holding time model
+		if ( this.gillespie ) {	// gillespie holding time model
 			this.trans = "gillespie";
 			
 			var
@@ -783,7 +821,10 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					return draw( cumP[fr] );
 				},
 
-				bayes: function ( t, u ) {  // toState using metropolis-hastings (or mcmc) with generator G
+				bayes: function ( t, u ) {
+					return $.crfStep( ran.bayes );
+					/*
+					// toState using metropolis-hastings (or mcmc) with generator G
 					var 
 						bayes = ran.bayes,
 						P = bayes.eqP,
@@ -836,6 +877,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 						//if (t == 0 ) Log("gauss", t, N, dim, mean, k, ref, A);
 						return k;
 					}
+					*/
 				},
 
 				wiener: function ( t, u ) {
