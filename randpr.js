@@ -185,7 +185,7 @@ class RAN {
 		}
 		
 		else
-		if ( this.bayes ) {   // bayesian belief network (aka conditional markov field, a special mcmc)
+		if ( this.bayes ) {   // bayesian belief network (aka markov crf)
 			this.trans = "bayes";
 			
 			var 
