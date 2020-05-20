@@ -72,7 +72,7 @@ class RAN {
 			U: null,    // [N] ensemble states (categorial) or counts (stateless)
 			U0: null, 	// [N] ensemble states at t = 0
 			U1: null, 	// [N] ensemble state buffer 
-			UK: null,  // [N] ensemble state change accumulators (stateful K>0) or counts (stateless K=0)
+			UK: null,  // [N] ensemble state change counters (K>0) or counts (K=0)
 			UH: null, 	// [N] ensemble holding times
 			UN: null, // [N x K] ensemble counts in state ( # of times U[n] in state k )
 			
@@ -189,8 +189,9 @@ class RAN {
 			this.trans = "bayes";
 			
 			var 
-				nets = {
+				nets = {	// canned crfs
 					t1s2: {
+						drop: 0,
 						states: [0, 1],
 						vars: {a: "x", b: "x", x: "" },
 						type: "a<-x->b",
@@ -206,6 +207,7 @@ class RAN {
 					},
 
 					t2s2: {
+						drop: 0,
 						states: [0, 1],
 						vars: {a: "", b: "", x: "a,b" },
 						type: "a<-x->b",
@@ -223,6 +225,8 @@ class RAN {
 				net = nets[ this.bayes.class ] || {};
 				
 			this.bayes = Copy( this.bayes, net );
+			Log(">>>crf", this.bayes);
+			
 			/*
 			var 
 				bayes = this.bayes,
@@ -399,9 +403,10 @@ class RAN {
 				var
 					mu = emP.mu,	// mean 
 					sigma = emP.sigma || emP.cov,		// covar matricies
-					K = this.K = mu.length,		// #mixes, dim(mu[k]) = D = vector dim
-					parm = emP.parm = $(K, (k,p) => p[k] = {mu: mu[k], sigma: sigma[k]} ),
-					gen = emP.gen = $(K, (k,g) => g[k] = MVN( parm[k].mu, parm[k].sigma ) );
+					//K = this.K = mu.length,		// #mixes, dim(mu[k]) = D = vector dim
+					mixes = this.mixes = mu.length,
+					parm = emP.parm = $(mixes, (k,p) => p[k] = {mu: mu[k], sigma: sigma[k]} ),
+					gen = emP.gen = $(mixes, (k,g) => g[k] = MVN( parm[k].mu, parm[k].sigma ) );
 			}
 			
 			else  { // derived [(mean,sigma), ....] using cholesky decomp
@@ -531,7 +536,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					det: $.det( sigma )
 				});
 				
-				var K = this.K = mixes;
+				//var K = this.K = mixes;
 				emP.gen = rvg.gen;
 				emP.parm = rvg.parm;
 				// Log("gen snr check", snr0);
@@ -540,7 +545,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
 			// offcov 8d4m  "offcov": [0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1, 0.3, 0.2, 0.1, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.1]
-			emP.obs = $(N);		// reserve observation ensemble
+			//emP.obs = $(N);		// reserve observation ensemble
 		}
 
 		// define our state symbole
@@ -669,8 +674,19 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 	
 	statCorr( ) {  // statistical correlation function
+		
+		const {K,corrMap,corP,N0,N,samples} = ran = this;
+		
 		var 
-			K = this.K, map = this.corrMap, cor = 0, corP = this.corP, p, N0 = this.N0, N = this.N, samples = this.samples;
+			cor = 0, 
+			p;
+			/*
+			K = this.K, 
+			map = this.corrMap, 
+			corP = this.corP, 
+			N0 = this.N0, 
+			N = this.N, 
+			samples = this.samples; */
 
 		if (samples)
 			map.$( fr => {
@@ -689,19 +705,23 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 
 	eqProbs( ) { // equlib probs
+		const {N,T,eqP,UN} = ran = this;
+		
+		/*
 		var
 			N = this.N,
 			T = this.t,
 			eqP = this.eqP,
-			UN = this.UN;
+			UN = this.UN;  */
 		
 		eqP.$( (k,P) => {
-			var sum =0;
+			var sum = 0;
 			UN.$( (n,N) => sum += N[k] );
 			P[k] = sum / N / T;
 		});
 	}
 	
+	/*
 	condProbs( ) {	// estimate network conditional probs from Directlet priors
 		var 
 			K = this.K,
@@ -734,12 +754,16 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			});
 		});
 	}
-
+	*/
+	
 	holdTimes( ) {	// mle hold times
+		const {cumH,cumN,mleR} = ran = this;
+		
+		/*
 		var
 			cumH = this.cumH,
 			cumN = this.cumN,
-			mleR = this.mleR;
+			mleR = this.mleR;  */
 		
 		mleR.$( fr => {   // estimate jump rates using cummulative UH[fr][to] and N[fr][to] jump times and counts
 			mleR[fr].$( to => {
@@ -749,9 +773,12 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 	
 	transProbs( ) {	// mle transition probs
+		const {N1,mleA} = ran = this;
+		
+		/*
 		var
 			N1 = this.N1,
-			mleA = this.mleA;
+			mleA = this.mleA;  */
 		
 		N1.$( fr => {  // transition prob mleA using the 1-step state transition counts
 			N1[fr].sum( sum => {
@@ -772,6 +799,8 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			return (to == K) ? to-1 : to;
 		}
 
+		const {gamma,UH,NR,mleA,UK,U1,U0,U,UN,N1,N0,cumH,cumN,A,symbols,keys,K,N,dt,t,s} = ran = this;
+		/*
 		var 
 			ran = this,
 			UH = this.UH, NR = this.NR, mleA = this.mleA,
@@ -782,12 +811,17 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			
 			symbols = this.symbols, keys = this.keys, emP = this.mixing, 
 			K = this.K, t = this.t, N = this.N, s=this.s, dt = this.dt,
-			
+			*/
+		
+		var
 			transitions = {
 				// homogeneous stateful process
 
-				mixing: function ( t, u ) { 
-					return u;
+				mixing: function ( t, u, n ) { 
+					//return u;
+					const {mixing} = ran;
+					const {gen,mixes} = mixing;
+					return gen[ n % mixes ].sample();
 				},
 				
 				markov: function ( t, u ) {  // toState via trans probs
@@ -822,7 +856,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				},
 
 				bayes: function ( t, u ) {
-					return $.crfStep( ran.bayes );
+					return $.crf( ran.bayes, ran.bayes.drop );
 					/*
 					// toState using metropolis-hastings (or mcmc) with generator G
 					var 
@@ -909,7 +943,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 			trans = transitions[ ran.trans ];
 				
-		if ( trans ) {
+		if ( trans ) {		// have a valid transition method
 			U.$( n => U1[n] = U[n] );  // hold current states/values
 
 			if (evs) { // in learning mode 
@@ -930,7 +964,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 				t = this.t = evs[0].t;	
 
-				if (K) // categorical process so latch states
+				if (K) // stateful process so latch states
 					evs.forEach(ev => {	// set states (if supervised) or symbols[0] (if hidden)
 						U[ ev[keys.index] || 0 ] = symbols[ ev[keys.value] || 0 ];
 					});
@@ -943,7 +977,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 			else  { // in generative mode
 				U.$( n => {
-					U[ n ] = trans( t , U[n] );
+					U[ n ] = trans( t , U[n], n );
 				});
 			}
 
@@ -951,8 +985,8 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 
 			// update process counters
 
-			if (K)  { // categorical process
-				this.gamma[s] = this.statCorr();		
+			if (K)  { // stateful process
+				gamma[s] = this.statCorr();		
 
 				U.$( n => {  // adjust jump counters
 					var
@@ -982,18 +1016,20 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					UN[ n ] [ k ]++; 		// # times U[n] in state k; for computing cond probs
 				});
 
-				if ( emP ) {
-					var gen = emP.gen;
+				/*
+				if ( emP = mixing ) {	// generate observations using emmision probs
+					//var gen = emP.gen;
+					const {gen,obs} = emP;
 					U.$( n => {
 						//Log(n,U[n], n % K, K);
-						emP.obs[n] = gen[ n % K ].sample();
+						obs[n] = gen[ n % K ].sample();
 					});
-				}
+				}  */
 			}
 
 			else  // stateless process
 				U.$( n => {   // adjust counters
-					UK[ n ] += U[ n ];
+					UK[ n ] += U[ n ] ? 1 : 0;
 				});
 
 			//Log( (t<10) ? "0"+t : t, U.join(""));
@@ -1003,20 +1039,25 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			this.onStep();
 		}
 		
-		this.t += this.dt;
+		this.t += dt;
 		this.s++;
 	}
 	
 	start ( ) {	  // start process in learning (reverse) or generative (forward) mode
+		
+		const {U,batch,steps} = ran = this;
+		
 		var 
-			ran = this,
-			U = this.U,
-			interpolate = false,
-			batch = this.batch;
+			//ran = this,
+			//U = this.U,
+			interpolate = false;
+			//batch = this.batch;
 
 		if ( ran.learn && !ran.halt )  // learning mode
 			ran.learn( function supervisor(evs, cb) {  // process events when evs, or terminate with callback(results) when evs exhausted
 
+				const {store, steps, F, UK, N} = ran;
+				
 				if (evs) {
 					//Log("FEEDING "+evs.length + " len="+evs[0].t);
 					ran.step(evs);
@@ -1028,13 +1069,13 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					ran.onEnd();
 					if (cb)
 						cb({  // callback with a ran ctx 
-							store: ran.store,  // output event store
-							T: ran.steps,		// observation time
-							F: ran.F,	// event count frequencies
-							f: mass( ran.F, N, false),	// event count probabilities
-							Nevs: counts( ran.F ), 	// total number of events
-							J: ran.UK,		// ensemble counts
-							N: ran.N		// ensemble size
+							store: store,  // output event store
+							T: steps,		// observation time
+							F: F,	// event count frequencies
+							f: mass( F, N, false),	// event count probabilities
+							Nevs: counts( F ), 	// total number of events
+							J: UK,		// ensemble counts
+							N: N		// ensemble size
 						});
 				}
 
@@ -1045,7 +1086,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		else { // generative mode
 			//Log("start gen", ran.steps, ran.N);
 			
-			while (ran.s < ran.steps) {  // advance process to end
+			while (ran.s < steps) {  // advance process to end
 				ran.step(null);
 				
 				if ( batch )
@@ -1059,41 +1100,52 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	
 	corrTime ( ) {  // return correlation time computed as area under normalized auto correlation function
 		
-		if ( this.K ) { // categorical process
+		const {K,t,gamma,dt} = ran = this;
+		
+		if ( K ) { // stateful process
 			var Tc = 0;
-			for (var t=0, T = this.t; t<T; t++) Tc += abs(this.gamma[t]) * (1 - t/T);
+			for (var s=0, T = t; s<T; s++) Tc += abs(gamma[s]) * (1 - s/T);
 
-			Tc *= this.dt / this.gamma[0] / 2;
+			Tc *= dt / gamma[0] / 2;
 		}
 		
 		else
 			var Tc = 0;
 		
-		Log(">>>>>>>>>Tc=", Tc);
+		//Log(">>>>>>>>>Tc=", Tc);
 		return Tc;
 	}
 	
 	countFreqs ( ) {  // return count frequencies across the ensemble
 
+		const {UK,K} = ran = this;
+		
 		var
-			UK = this.UK,  // ensemble counters
-			K = this.K,	// number of states (0 = stateless process)
+			//UK = this.UK,  // ensemble counters
+			//K = this.K,	// number of states (0 = stateless process)
 			Kmax = K ? UK.max() : floor( UK.max() ),
 			F = this.F = $( 1 + Kmax , $zero );  
 
 		UK.$( n => F[ K ? UK[n] : floor( UK[n] ) ]++ ); 
-		return F;
+		//return F;
 	}
 	
 	record (at, ev) {  // record event ev labeled at to store or stream
-		ev.t = this.t;
+		const {t,store} = ran = this;
+		
+		ev.t = t;
 		ev.at = at;
-		this.filter(this.store, ev, this);
+		this.filter(store, ev, this);
 	}
 	
 	// State methods
 	
 	onBatch () {    // record MLE jump rates and trans probs
+
+		const {t,s,N,K,mleA,mleR,eqP,gamma,markov,mixing} = ran = this;
+		Log(">>>onbatch", t,s,N,K);
+		
+		/*
 		var 
 			ran = this,
 			K = this.K,
@@ -1101,19 +1153,20 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			s = this.s,
 			N = this.N,
 			net = this.net,
-			F = this.countFreqs();
+			F = this.countFreqs(); */
 
 		if (K) {
-			if ( this.net ) this.condProbs( );
+			//if ( this.net ) this.condProbs( );
+			this.countFreqs();
 			this.eqProbs( );
 			this.transProbs( );
 			this.holdTimes( );
 		}
 		
 		else
-		if ( this.markov ) {	// relative error between mle and actual trans probs
+		if ( markov ) {	// relative error between mle and actual trans probs
 			var 
-				trP = this.markov,
+				trP = markov,
 				ref = 0,
 				err = this.err = trP   
 					? abs( mleA[ref][ref] - trP[ref][ref] ) / trP[ref][ref]
@@ -1123,18 +1176,18 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		else
 			var err = 0;
 		
-		Log("batch", t, F.length, this.UK.avg().toFixed(4), net ? net.theta : null );
+		//Log("batch", t, F.length, this.UK.avg().toFixed(4), net ? net.theta : null );
 		//Log("batch", t, F.length, this.UK.avg().toFixed(4), F.join(" "));
 		
 		this.record("batch", {
-			count_freq: F,
-			count_prob: $( F.length, n => F[n]/N ),
+			//count_freq: F,
+			//count_prob: K ? $( F.length, n => F[n]/N ) : null,
 			rel_error: err,
-			mle_tr_probs: this.mleA,
-			mle_hold_time: this.mleR,
-			eq_probs: K ? this.eqP : null,
-			eq_cond_probs: net ? net.theta : null,
-			stat_corr: K ? this.gamma[ s-1 ] : 0
+			mle_tr_probs: mleA,
+			mle_hold_time: mleR,
+			eq_probs: K ? eqP : null,
+			//eq_cond_probs: net ? net.theta : null,
+			stat_corr: K ? gamma[ s-1 ] : 0
 		});	
 	}
 
@@ -1152,9 +1205,11 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 	
 	onStep () {		// record process step info
+		const {gamma,wiener,U,s} = ran = this;
+		
 		this.record("step", {
-			gamma:this.gamma[this.s],
-			walk: this.wiener ? this.U : []
+			gamma: gamma[s],
+			walk: wiener ? U : []
 		});
 	}
 
@@ -1182,36 +1237,47 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		
 		//Log("onend", this.obs.length);
 		
+		const {t,s,K,N,batch,steps,mixing,gamma} = ran = this;
+		//Log(">>>end", t,s,K,N);
+		
 		var 
-			ran = this,
-			batch = this.batch,
-			T = this.steps,
-			Tc = this.corrTime(),
-			Kbar = this.UK.avg(),
-			M = T / Tc,
-			delta = Kbar / M,
-			F = this.countFreqs(),
-			K = this.K,
-			emP = this.mixing,
-			mleB = this.mleB = this.mixing ? EM( emP.obs, K) : null;
-
+			//ran = this,
+			//batch = this.batch,
+			T = steps, //this.steps,		// observation time
+			Tc = this.corrTime(),		// correlation time
+			Kbar = this.UK.avg(),		// average counts
+			M = T / Tc,						// #coherence intervals
+			delta = Kbar / M,			// degeneracy factor
+			snr = sqrt( Kbar / (1 + delta ) );  	// sig/noise ratio
+		
+		if (K) this.countFreqs();
+		
+		// K = this.K,
+		// emP = this.mixing,
+		
+		if (mixing && ran.learn) {
+			const {U} = ran;
+			const {mixes} = mixing;
+			this.mleB = EM( U, mixes);
+		}
+		
 		//Log("onend UK", UK);
 		
 		this.record("end", {  // record supervised stats
 			stats: {
 				mle_holding_times: ran.mleR,
 				rel_error: ran.err,
-				count_freq: F,
+				count_freq: ran.F,
 				mle_em_probs: ran.mleB,
 				mle_tr_probs: ran.mleA,
 				tr_counts: ran.N1,
 				mean_count: Kbar, 
 				coherence_time: Tc, 
 				coherence_intervals: M,
-				correlation_0lag: ran.gamma[0],
+				correlation_0lag: gamma[0],
 				mean_intensity: Kbar / T,
 				degeneracy_param: delta,
-				snr: sqrt( Kbar / (1 + delta ) )
+				snr: snr
 			}
 		});
 
@@ -1230,20 +1296,23 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 	
 	pipe(sinkStream) {  // pipe events to a sinking stream or to a callback sinkStream(events)
+		
+		const {s,steps} = ran = this;
+		
 		var 
-			ran = this,
+			//ran = this,
 			sync = (typeof sinkStream) == "function";
 
 		Trace( `PIPE${sync ? "sync" : "async"}` );
 		
-		ran.store = sync
+		ran.store = sync	// establish output stream
 			? []
 			: new STREAM.Readable({  // prime and terminate the pipe
 				objectMode: true,
 				read: function () {  // prime or terminate the pipe
 					//Log("randpr pipe at", ran.t);
 
-					if ( ran.s < ran.steps ) 	// prime
+					if ( s < steps ) 	// prime
 						ran.start( );
 
 					else  { // terminate
@@ -1255,7 +1324,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		
 		ran.onConfig();		// process configured
 		
-		if  (sync) {  // pipe is sync mode using array store
+		if (sync) {  // pipe in sync mode using array store
 			ran.start();
 			
 			sinkStream( ran.store );
