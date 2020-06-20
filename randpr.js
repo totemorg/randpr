@@ -2,9 +2,7 @@
 
 'use strict';
 /**
-[Installation and Usage](https://sc.appdev.proj.coe/acmesds/randpr)
-
-@module RANDPR
+@module randpr
 @requires stream
 @requires man
 **/
