@@ -2,9 +2,11 @@
 
 'use strict';
 /**
-@module randpr
-@requires stream
-@requires man
+	@module randpr
+	Generate various random processes.  See https://github.com/totemstan/randpr.git.
+	
+	@requires stream
+	@requires man
 **/
 
 var			
