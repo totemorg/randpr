@@ -101,7 +101,7 @@ Clone [RANDPR random process](https://github.com/totemstan/randpr) || [COE](http
 
 ### Manage 
 
-	npm test [ ? || R1 || R2 || ... ]			# unit test
+	npm test [ ? || R1 || R2 || ... ]	# unit test
 	npm run [ edit || start ]			# Configure environment
 	npm run [ prmprep || prmload ]		# Revise PRM
 
