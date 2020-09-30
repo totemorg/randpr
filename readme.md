@@ -93,11 +93,11 @@ Mixing:
 
 ## Installation
 
-Clone [RANDPR random process](https://github.com/totemstan/randpr) || [COE](https://sc.appdev.proj.coe/acmesds/randpr) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/randpr) into your PROJECT/randpr folder. 
+Clone [RANDPR random process]REPO{randpr} into your PROJECT/randpr folder. 
 
 ## Requires
 
-[ENUM standard enumerators](https://github.com/totemstan/enum) || [COE](https://sc.appdev.proj.coe/acmesds/enum) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/enum), [MAN matrix manipulator](https://github.com/totemstan/man) || [COE](https://sc.appdev.proj.coe/acmesds/man) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/man).
+[ENUM standard enumerators]REPO{enum}, [MAN matrix manipulator]REPO{man}.
 
 ### Manage 
 
@@ -121,8 +121,8 @@ then create a new instance:
 		console.log( err ? "something evil is lurking" : "look mom - Im running!");
 	});
 
-where [its configuration keys](http://totem.hopto.org/shares/prm/randpr/index.html) || [COE](https://totem.west.ile.nga.ic.gov/shares/prm/randpr/index.html) || [SBU](https://totem.nga.mil/shares/prm/randpr/index.html)
-follow the [ENUM deep copy conventions](https://github.com/totemstan/enum) || [COE](https://sc.appdev.proj.coe/acmesds/enum) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/enum).
+where [its configuration keys]SITE{shares/prm/randpr/index.html}
+follow the [ENUM deep copy conventions]REPO{enum}.
 
 The instance can then be piped:
 
@@ -367,9 +367,9 @@ configured in the reverse/learning mode).
 	
 ## Contacting, Contributing, Following
 
-Feel free to [submit and status TOTEM issues](http://totem.hopto.org/issues.view) || [COE](https://totem.west.ile.nga.ic.gov/issues.view) || [SBU](https://totem.nga.mil/issues.view), [contribute TOTEM notebooks](http://totem.hopto.org/shares/notebooks/) || [COE](https://totem.west.ile.nga.ic.gov/shares/notebooks/) || [SBU](https://totem.nga.mil/shares/notebooks/),
-[inspect TOTEM requirements](http://totem.hopto.org/reqts.view) || [COE](https://totem.west.ile.nga.ic.gov/reqts.view) || [SBU](https://totem.nga.mil/reqts.view), [browse TOTEM holdings](http://totem.hopto.org/) || [COE](https://totem.west.ile.nga.ic.gov/) || [SBU](https://totem.nga.mil/), 
-or [follow TOTEM milestones](http://totem.hopto.org/milestones.view) || [COE](https://totem.west.ile.nga.ic.gov/milestones.view) || [SBU](https://totem.nga.mil/milestones.view).
+Feel free to [submit and status TOTEM issues]SITE{issues.view}, [contribute TOTEM notebooks]SITE{shares/notebooks/},
+[inspect TOTEM requirements]SITE{reqts.view}, [browse TOTEM holdings]SITE{}, 
+or [follow TOTEM milestones]SITE{milestones.view}.
 	
 ## License
 
