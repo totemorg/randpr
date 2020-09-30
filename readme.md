@@ -101,8 +101,8 @@ Clone [RANDPR random process]REPO{randpr} into your PROJECT/randpr folder.
 
 ### Manage 
 
-	npm run [ edit || start ]			# Configure environment
 	npm test [ ? || R1 || R2 || ... ]			# unit test
+	npm run [ edit || start ]			# Configure environment
 	npm run [ prmprep || prmload ]		# Revise PRM
 
 ## Usage
