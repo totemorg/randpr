@@ -2,8 +2,9 @@
 
 'use strict';
 /**
-	@module randpr
-	Generate various random processes.  See https://github.com/totemstan/randpr.git.
+	@module RANDPR
+	
+	[]RANDPR](https://github.com/totemstan/randpr.git) generates various random processes.
 	
 	@requires stream
 	@requires man
