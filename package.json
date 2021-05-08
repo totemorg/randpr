@@ -4,9 +4,9 @@
   "description": "",
   "main": "randpr.js",
   "scripts": {
-    "prmprep": "source ./maint.sh prmput",
-    "prmload": "source ./maint.sh prmget",
-    "test": "node randpr.js "
+    "test": "node randpr.js ",
+	"redoc": "jsdoc2md --template README.hbs --files randpr.js >README.md; git commit -am 'redoc'; git  push agent master"
+
   },
   "repository": {
     "type": "git",
