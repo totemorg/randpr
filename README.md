@@ -375,3 +375,27 @@ or [follow TOTEM milestones](http://totem.hopto.org/milestones.view) || [COE](ht
 
 [MIT](LICENSE)
 
+											   
+<a name="module_RANDPR"></a>
+
+## RANDPR
+Generates various random processes.
+
+**Requires**: <code>module:stream</code>, <code>module:man</code>  
+<a name="module_RANDPR..filter"></a>
+
+### RANDPR~filter()
+Output event filter
+				filter: function (str, ev, ran) { // event ev for stream/store str
+						switch ( ev.at ) {   // streaming plugins provide an "at" to filter events on
+							case "...":
+							case "...":
+								str.push(ev);	// return the event
+						}
+					}
+
+**Kind**: inner method of [<code>RANDPR</code>](#module_RANDPR)  
+
+* * *
+
+&copy; 2012 ACMESDS
