@@ -18,5 +18,7 @@
     "url": "https://github.com/acmesds/randpr/issues"
   },
   "homepage": "https://github.com/acmesds/randpr#readme",
-  "dependencies": {}
+  "dependencies": {
+	 "man": "^1.1.0"
+  }
 }
