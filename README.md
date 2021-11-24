@@ -84,7 +84,7 @@ streams to minimize memory usage.
 
 	Gauss mixing process with specified mu,sigma (mean, covar), or specified snr, cone, mixes, oncov, offcov
 
-# Refs:
+## Refs
 	www.statslab.cam.ac.uk/~rrw1
 	www.stat.yale.edu/~pollard
 	people.math.gatech.edu/~randall
