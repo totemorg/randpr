@@ -22,7 +22,7 @@ streams to minimize memory usage.
 **RANDPR** supports the following processes.
 
 
-Bayes:
+## Bayes
 
 	K-state process governed by a prescribed conditional independency network:
 	
@@ -33,7 +33,7 @@ Bayes:
 	
 		dag: { ... }
 	
-Gillespie:
+## Gillespie
 
 	Inhomogenious K-state process with specified transition probabilties:
 	
@@ -41,7 +41,7 @@ Gillespie:
 		
 	where its K^2 transition probs are synthesized using the gillespie model.
 	
-Markov:
+## Markov
 
 	K-state process with specified transition probabilities:
 	
@@ -54,7 +54,7 @@ Markov:
 		
 	where from-to transition probs must be specified to conserve prob, i.e. sum_k TxPrs[n][k] = 1.
 
-Gauss:
+## Gauss
 
 	Correlated, stateless random process whose parameters are typically derived (see man) 
 	for a process with known correlation intervals M = T/Tc or SNR = sqrt{ M / ( 1 + deltaC / M) }.
@@ -65,7 +65,7 @@ Gauss:
 		dim: max pc dimension (M = T/Tc )
 		mean: mean count in observation interval T
 
-Wiener:
+## Wiener
 
 	Stateless process with moving 2nd moment (but stationary in 1st increments) where:
 	
@@ -73,14 +73,14 @@ Wiener:
 		
 	This still needs a quick debug.  May need to define	false Markov parms to init it.
 	
-Ornstein: 
+## Ornstein
 
 	Stateless Ornstein-Ulenbeck process with:
 	
 		theta: 0-pi
 		a: sigma/sqrt(2 theta)
 		
-Mixing:
+## Mixing
 
 	Gauss mixing process with specified mu,sigma (mean, covar), or specified snr, cone, mixes, oncov, offcov
 
@@ -93,11 +93,15 @@ Mixing:
 
 ## Installation
 
-Clone [**RANDPR** random process](https://github.com/totemstan/randpr) || [COE](https://sc.appdev.proj.coe/acmesds/randpr) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/randpr) into your PROJECT/randpr folder. 
+Clone **RANDPR** from one of its repos:
 
-## Requires
+	git clone https://github.com/totemstan/randpr
+	git clone https://sc.appdev.proj.coe/acmesds/randpr
+	git clone https://gitlab.west.nga.ic.gov/acmesds/randpr
 
-[ENUM standard enumerators](https://github.com/totemstan/enum) || [COE](https://sc.appdev.proj.coe/acmesds/enum) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/enum), [MAN matrix manipulator](https://github.com/totemstan/man) || [COE](https://sc.appdev.proj.coe/acmesds/man) || [SBU](https://gitlab.west.nga.ic.gov/acmesds/man).
+Dependent modules:
+
++ **ENUMS** [WWW](https://github.com/totemstan/enums)  [COE](https://sc.appdev.proj.coe/acmesds/enums)  [SBU](https://gitlab.west.nga.ic.gov/acmesds/enums)  
 
 ### Manage 
 
