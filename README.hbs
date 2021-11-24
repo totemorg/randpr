@@ -131,7 +131,7 @@ where its configuration keys (
 [COE](https://totem.west.ile.nga.ic.gov/shares/prm/totem/index.html) 
 [SBU](https://totem.nga.mil/shares/prm/totem/index.html)
 )
-follow the ENUM deep copy conventions (
+follow the **ENUMS** deep copy conventions (
 [WWW](https://github.com/totemstan/enum) 
 [COE](https://sc.appdev.proj.coe/acmesds/enum) 
 [SBU](https://gitlab.west.nga.ic.gov/acmesds/enum)
