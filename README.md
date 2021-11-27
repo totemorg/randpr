@@ -148,7 +148,7 @@ configured in the reverse/learning mode).
 ## Program Reference
 <details>
 <summary>
-<i>Expand</i>
+<i>Open/Close</i>
 </summary>
 <a name="module_RANDPR"></a>
 
