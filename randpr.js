@@ -74,12 +74,6 @@ R3 sync pipe with various textbook examples, custom filtering with supervised le
 		//markov: [[1-.2, .1, .1], [0.4, 1-.5, .1], [.1, .1, 1-.2]],
 		//markov: [[1-.6, .2, .2,.2], [.1, 1-.3, .1,.1], [.1, .1, 1-.4,.2],[.1,.1,1-.8,.6]],  // non-ergodic
 
-		/*
-		emP: {
-			mu: [ [1], [1.1] ],
-			sigma: [ [[1]], [[2]] ]
-		}, */
-
 		batch: 50,  // supervised learning every 50 steps
 
 		filter: function (str, ev) {  
