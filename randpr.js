@@ -10,7 +10,8 @@ Generates various random processes.
 @requires man
 
 @example
-R2.1 - config methods
+R2.1 - config methods:
+
 	var ran = new RAN({
 		p: [.4],
 		//markov: [[0.1, 0.9], [0.1, 0.9]]
@@ -18,7 +19,8 @@ R2.1 - config methods
 	});
 
 @example
-R2.3 - config methods
+R2.3 - config methods:
+
 	var ran = new RAN({
 		emP: {
 			dims: [3,3],
@@ -28,7 +30,8 @@ R2.3 - config methods
 	});
 		
 @example
-R2.4 - config methods
+R2.4 - config methods:
+
 	var ran = new RAN({
 		emP: {
 			dims: [2,2,2],
@@ -38,7 +41,7 @@ R2.4 - config methods
 	});
 	
 @example
-R3 sync pipe with various textbook examples, custom filtering with supervised learning validation
+R3 sync pipe with various textbook examples, custom filtering with supervised learning validation:
 	
 	var ran = new RAN({
 		// these have same eqprs [.5, .5] (symmetry -> detailed balance --> eqP[k] = 1/K  eqpr)
@@ -118,7 +121,7 @@ R3 sync pipe with various textbook examples, custom filtering with supervised le
 		});
 		
 @example
-R3.1 - gen process for R3.2 with async pipe to stdout
+R3.1 - gen process for R3.2 with async pipe to stdout:
 	
 	var ran = new RAN({
 
@@ -141,7 +144,7 @@ R3.1 - gen process for R3.2 with async pipe to stdout
 	ran.pipe(process.stdout);
 		
 @example
-R3.2 - gen process for R3.3 using async pipe to stdout
+R3.2 - gen process for R3.3 using async pipe to stdout:
 
 	var ran = new RAN({
 
@@ -165,7 +168,8 @@ R3.2 - gen process for R3.3 using async pipe to stdout
 	ran.pipe(process.stdout);  // stdout evs used in R3.3
 		
 @example
-R3.3 - supervised learning with R3.2 evs using sync pipe to store
+R3.3 - supervised learning with R3.2 evs using sync pipe to store:
+
 	var 
 		evs = [
 				{ at: 'jump', t: 1, s: 1, index: 3, state: 0, hold: 0, obs: null },
