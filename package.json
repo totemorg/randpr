@@ -1,12 +1,13 @@
 {
   "name": "randpr",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "",
   "main": "randpr.js",
   "scripts": {
+    "verminor": "npm version minor -f",
+    "vermajor": "npm version major -f",
     "test": "node randpr.js ",
-	"redoc": "jsdoc2md --template README.hbs --files randpr.js >README.md; git commit -am 'redoc'; git  push agent master"
-
+    "redoc": "jsdoc2md --template README.hbs --files randpr.js >README.md; git commit -am 'redoc'; git  push agent master"
   },
   "repository": {
     "type": "git",
@@ -19,6 +20,6 @@
   },
   "homepage": "https://github.com/acmesds/randpr#readme",
   "dependencies": {
-	 "man": "^1.1.0"
+    "man": "^1.1.0"
   }
 }
