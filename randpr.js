@@ -259,7 +259,7 @@ const
 	
 	$ = require("../man");   // matrix manipulators
 
-const { EM, MVN, Copy, Each, Trace } = $;
+const { EM, MVN, Copy, Each } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
 
 class RAN {
@@ -1688,10 +1688,6 @@ function balanceProbs(P) {  // enforce global balance on probs
 	});
 	return P;
 }			
-
-function Trace(msg) {
-	"rand".trace(msg);
-}
 
 function firstAbsorb(P) {  //< compute first absorption times, probs and states
 	var 
