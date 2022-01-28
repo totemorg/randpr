@@ -1913,6 +1913,7 @@ function index(keys, dims) {
 ].Extend(Array);
 
 switch ( process.argv[2] ) {   //< unit tests
+	case "R?":
 	case "?":
 		Trace("unit test with 'node randpr.js [R$ || R1 || R2 || ...]'");
 		break;
