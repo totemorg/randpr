@@ -1918,7 +1918,7 @@ switch ( process.argv[2] ) {   //< unit tests
 		break;
 	
 	case "R$":
-		Debug({RAN: RAN});
+		Debug({RAN: module.exports});
 		break;
 
 	case "R1":  // mean recurrence times
