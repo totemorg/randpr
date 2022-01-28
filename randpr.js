@@ -259,10 +259,10 @@ const
 	
 	$ = require("../man");   // matrix manipulators
 
-const { EM, MVN, Copy, Each } = $;
+const { EM, MVN, Copy, Each, Debug } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
 
-class RAN {
+module.exports = class RAN {
 	
 	constructor(opts, cb) {
 		
@@ -1600,9 +1600,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			
 	}
 		
-}
-
-module.exports = RAN;
+};
 
 function expdev(mean) {
 	return -mean * log(random());
@@ -1920,18 +1918,7 @@ switch ( process.argv[2] ) {   //< unit tests
 		break;
 	
 	case "R$":
-		const
-			VM = require("vm"),
-			CTX = VM.createContext(RAN);
-
-		require("repl").start({
-			eval: (cmd, ctx, filename, cb) => {
-				if ( cmd ) 
-					cb( null, VM.runInContext(cmd, CTX));
-			}, 
-			prompt: "$> ", 
-			useGlobal: true
-		});
+		Debug({RAN: RAN});
 		break;
 
 	case "R1":  // mean recurrence times
