@@ -79,23 +79,23 @@ R3 sync pipe with various textbook examples, custom filtering with supervised le
 		filter: function (str, ev) {  
 			switch (ev.at) {
 				case "config":
-					//Log(ev);
+					//Trace(ev);
 					str.push(ev);
 					break;
 
 				case "batch":
-					//Log(ev.s,ev.rel_txpr_error);
-					Log(ev);
+					//Trace(ev.s,ev.rel_txpr_error);
+					Trace(ev);
 					break;
 
 				case "end":
-					Log(ev);
+					Trace(ev);
 					var
 						A = ev.stats.mle_tr_probs,
 						B = ev.stats.mle_em_probs,
 						H = ev.stats.mle_holding_times;
 
-					Log("MLEs", {
+					Trace("MLEs", {
 						holdTimes: JSON.stringify(H),
 						emProbs: JSON.stringify(B),
 						trProbs: JSON.stringify(A)
@@ -111,7 +111,7 @@ R3 sync pipe with various textbook examples, custom filtering with supervised le
 		});
 
 		ran.pipe( function (store) { 
-			Log(store);
+			Trace(store);
 		});
 		
 @example
@@ -129,7 +129,7 @@ R3.1 - gen process for R3.2 with async pipe to stdout:
 				case "batch":
 				case "config":
 				case "end":
-					Log(JSON.stringify(ev));
+					Trace(JSON.stringify(ev));
 			}
 		},
 		steps: 800  
@@ -151,7 +151,7 @@ R3.2 - gen process for R3.3 using async pipe to stdout:
 		filter: function (str,ev) {
 			switch (ev.at) {
 				case "jump":
-					Log(ev);
+					Trace(ev);
 					break;
 				default:
 			}
@@ -207,7 +207,7 @@ R3.3 - supervised learning with R3.2 evs using sync pipe to store:
 
 			learn: function (supercb) {
 				evs.$( true, (evs) => {
-					Log( evs ? ` supervising ${evs.length} events` : " supervised" );
+					Trace( evs ? ` supervising ${evs.length} events` : " supervised" );
 
 					if (evs) // feed supervisor
 						supercb(evs);
@@ -222,17 +222,17 @@ R3.3 - supervised learning with R3.2 evs using sync pipe to store:
 			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
-						Log(ev);
+						Trace(ev);
 						str.push(ev);
 						break;
 
 					case "batch":
-						//Log(ev.s,ev.rel_txpr_error);
-						Log(ev);
+						//Trace(ev.s,ev.rel_txpr_error);
+						Trace(ev);
 						break;
 
 					case "end":
-						//Log(ev);
+						//Trace(ev);
 						str.push(ev);
 						break;
 				}
@@ -245,18 +245,21 @@ R3.3 - supervised learning with R3.2 evs using sync pipe to store:
 		});
 
 	ran.pipe( function (store) {
-		Log(store);
+		Trace(store);
 	});
 
 **/
 
-var			
+const			
 	// nodejs modules
 	STREAM = require("stream"),		// data streams
 	
-	$ = require("man");   // matrix manipulators
+	// totem modules
+	Trace = (msg, ...args) => `ran>>>${msg}`.trace( args ),
+	
+	$ = require("../man");   // matrix manipulators
 
-const { EM, MVN, Copy, Each, Log } = $;
+const { EM, MVN, Copy, Each, Trace } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
 
 class RAN {
@@ -358,7 +361,7 @@ class RAN {
 				n = alpha.length,
 				alpha0 = alpha.sum(),
 				p = this.p = $( n, (k,p) => p[k] = alpha[k] / alpha0 );
-				//Log("alpha->p", p, alpha0);
+				//Trace("alpha->p", p, alpha0);
 		}
 		
 		if ( this.p ) {   // K-state convergent process via n = (K^2-K)/2 state trans probs
@@ -379,7 +382,7 @@ class RAN {
 				if ( to < fr ) P[fr][to] = P[to][fr];
 			});
 			
-			//Log("p->trP", K, trP);
+			//Trace("p->trP", K, trP);
 		}
 
 		if ( this.markov ) { // K-state process from K^2 state trans probs in K^2 - K params
@@ -422,7 +425,7 @@ class RAN {
 				ab = trP.absorb = firstAbsorb(trP),  // first absoption times, probs, and states
 				eqP = trP.eqP = $(K, (k,P) => P[k] = 1/NR[k][k]	);  // equlib state probs
 		
-			Log(K, trP, cumP, NR, ab, eqP);
+			Trace(K, trP, cumP, NR, ab, eqP);
 		}
 		
 		else
@@ -466,7 +469,7 @@ class RAN {
 				net = nets[ this.bayes.class ] || {};
 				
 			this.bayes = Copy( this.bayes, net );
-			Log(">>>crf", this.bayes);
+			Trace(">>>crf", this.bayes);
 			
 			/*
 			var 
@@ -568,7 +571,7 @@ class RAN {
 					});
 				});
 			
-			Log("bayes", N, K, dims, alpha, theta, count, G);	
+			Trace("bayes", N, K, dims, alpha, theta, count, G);	
 			*/
 		}
 		
@@ -746,7 +749,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 								};
 							
 							try {
-								//Log(n, parm[n]);
+								//Trace(n, parm[n]);
 								gen[n] = MVN( parm[n].mu, parm[n].sigma );
 							}
 							catch (err) {
@@ -757,7 +760,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					}
 				});
 				
-				//Log(">>>>>ctx", ctx);
+				//Trace(">>>>>ctx", ctx);
 				const {mixes,dim,sigma,D,L,rvg,snr,cone,g,mu} = Copy( $( ctx.decomp, ctx), emP );
 
 				/*
@@ -766,7 +769,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					X = $([N,N], (i,j,X) => X[i][j] = (j==1) ? sigma[i][0] : sigma[i][j] );
 				*/
 				
-				Log({
+				Trace({
 					dim: dim,
 					cone: cone, 
 					mixes: mixes, 
@@ -780,9 +783,9 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				//var K = this.K = mixes;
 				emP.gen = rvg.gen;
 				emP.parm = rvg.parm;
-				// Log("gen snr check", snr0);
-				// Log("parm", parm);
-				// Log("sigma", ctx.sigma, "D", D, "L", L);
+				// Trace("gen snr check", snr0);
+				// Trace("parm", parm);
+				// Trace("sigma", ctx.sigma, "D", D, "L", L);
 				// D = diag([4,1,9])  off=[3, -4, 5] => L = [ 1 0 0; 3 1 0; -4 5 1 ] => covar = [ 4 12 -16; 12 37 -43; -16 -43 98 ]
 			}
 			// offcov 8d4m  "offcov": [0.1, 0.2, 0.3, 0.4, 0.3, 0.2, 0.1, 0.3, 0.2, 0.1, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.3, 0.3, 0.1]
@@ -833,7 +836,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					map[k++] = -a;
 				}
 
-		Log({
+		Trace({
 			ensemble: N,
 			keys: keys,
 			states: K, 
@@ -907,7 +910,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		else	// init stateless process
 			U.$( n => { UH[n] = 0; U0[n] = U[n] = 0; } );
 		
-		//Log("UH", UH);
+		//Trace("UH", UH);
 
 		this.gamma = $(this.steps, $zero);
 		
@@ -1025,7 +1028,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			N1[fr].sum( sum => {
 				mleA[fr].$( to => {
 					mleA[fr][to] = N1[fr][to] / sum;
-					//Log(fr,to,Nfr[to], sum);
+					//Trace(fr,to,Nfr[to], sum);
 				});
 			});
 		});
@@ -1113,7 +1116,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 						accept = min(1 , Ap * Ag), // acceptance criteria
 						u = random();
 
-					//if (t == 0) Log(">>>>>>>>>>>Ginit", t, G, P, accept);
+					//if (t == 0) Trace(">>>>>>>>>>>Ginit", t, G, P, accept);
 					return (u <= accept) ?  to : fr;
 				},
 
@@ -1139,7 +1142,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 									Bmod = sqrt( expdev( mean * vals[n] / ref ) ),  
 									Barg = random() * PI;
 
-								//if (t == 0)  Log( t , n , N, vals[n] / ref , mean, Bmod);
+								//if (t == 0)  Trace( t , n , N, vals[n] / ref , mean, Bmod);
 								B[n] = $.complex( Bmod * cos(Barg), Bmod * sin(Barg) );  
 							}),
 							V = $(N, (n,V) => {  // get KL eigen vector at time t [sqrt Hz]
@@ -1149,7 +1152,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 							lambda = $.abs(A)**2,  // event rate process [Hz]
 							k = lambda * dt;  // [events]
 
-						//if (t == 0 ) Log("gauss", t, N, dim, mean, k, ref, A);
+						//if (t == 0 ) Trace("gauss", t, N, dim, mean, k, ref, A);
 						return k;
 					}
 					*/
@@ -1222,7 +1225,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				});
 			}
 
-			// Log(t, U.join(" "));
+			// Trace(t, U.join(" "));
 
 			// update process counters
 
@@ -1262,7 +1265,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					//var gen = emP.gen;
 					const {gen,obs} = emP;
 					U.$( n => {
-						//Log(n,U[n], n % K, K);
+						//Trace(n,U[n], n % K, K);
 						obs[n] = gen[ n % K ].sample();
 					});
 				}  */
@@ -1273,9 +1276,9 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 					UK[ n ] += U[ n ] ? 1 : 0;
 				});
 
-			//Log( (t<10) ? "0"+t : t, U.join(""));
-			//if (t<50) Log( t<10 ? "0"+t : t,U,UK);		
-			//if (t<5) Log(t,N0);
+			//Trace( (t<10) ? "0"+t : t, U.join(""));
+			//if (t<50) Trace( t<10 ? "0"+t : t,U,UK);		
+			//if (t<5) Trace(t,N0);
 
 			this.onStep();
 		}
@@ -1300,12 +1303,12 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 				const {store, steps, F, UK, N} = ran;
 				
 				if (evs) {
-					//Log("FEEDING "+evs.length + " len="+evs[0].t);
+					//Trace("FEEDING "+evs.length + " len="+evs[0].t);
 					ran.step(evs);
 				}
 
 				else {
-					//Log("HALTING", ran.t, ran.steps);
+					//Trace("HALTING", ran.t, ran.steps);
 					ran.halt = true;
 					ran.onEnd();
 					if (cb)
@@ -1325,7 +1328,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			});
 		
 		else { // generative mode
-			//Log("start gen", ran.steps, ran.N);
+			//Trace("start gen", ran.steps, ran.N);
 			
 			while (ran.s < steps) {  // advance process to end
 				ran.step(null);
@@ -1353,7 +1356,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		else
 			var Tc = 0;
 		
-		//Log(">>>>>>>>>Tc=", Tc);
+		//Trace(">>>>>>>>>Tc=", Tc);
 		return Tc;
 	}
 	
@@ -1384,7 +1387,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	onBatch () {    // record MLE jump rates and trans probs
 
 		const {t,s,N,K,mleA,mleR,eqP,gamma,markov,mixing} = ran = this;
-		Log(">>>onbatch", t,s,N,K);
+		Trace(">>>onbatch", t,s,N,K);
 		
 		/*
 		var 
@@ -1417,8 +1420,8 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 		else
 			var err = 0;
 		
-		//Log("batch", t, F.length, this.UK.avg().toFixed(4), net ? net.theta : null );
-		//Log("batch", t, F.length, this.UK.avg().toFixed(4), F.join(" "));
+		//Trace("batch", t, F.length, this.UK.avg().toFixed(4), net ? net.theta : null );
+		//Trace("batch", t, F.length, this.UK.avg().toFixed(4), F.join(" "));
 		
 		this.record("batch", {
 			//count_freq: F,
@@ -1433,7 +1436,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	}
 
 	onError ( msg ) {	// record process error condition
-		Log(msg);
+		Trace(msg);
 		this.record("error", { 
 			error: msg
 		});
@@ -1476,10 +1479,10 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 	
 	onEnd() {  // record process termination info
 		
-		//Log("onend", this.obs.length);
+		//Trace("onend", this.obs.length);
 		
 		const {t,s,K,N,batch,steps,mixing,gamma} = ran = this;
-		//Log(">>>end", t,s,K,N);
+		//Trace(">>>end", t,s,K,N);
 		
 		var 
 			//ran = this,
@@ -1502,7 +1505,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			this.mleB = EM( U, mixes);
 		}
 		
-		//Log("onend UK", UK);
+		//Trace("onend UK", UK);
 		
 		this.record("end", {  // record supervised stats
 			stats: {
@@ -1551,7 +1554,7 @@ muG = a * [ cos(thetaG), sin(thetaG) ];
 			: new STREAM.Readable({  // prime and terminate the pipe
 				objectMode: true,
 				read: function () {  // prime or terminate the pipe
-					//Log("randpr pipe at", ran.t);
+					//Trace("randpr pipe at", ran.t);
 
 					if ( s < steps ) 	// prime
 						ran.start( );
@@ -1712,7 +1715,7 @@ function firstAbsorb(P) {  //< compute first absorption times, probs and states
 			abP: []
 		};
 	
-	//Log("ab ctx", JSON.stringify(ctx));
+	//Trace("ab ctx", JSON.stringify(ctx));
 	if ( ctx.nAb && ctx.nTr )
 		$("Q = P[kTr,kTr]; NR = P[kTr,kAb]; N = inv( eye(nTr,nTr) - Q ); abT = N*ones(nTr,1); abP = N*NR;", ctx);
 		
@@ -1765,17 +1768,17 @@ determine the process: only the mean recurrence times H and the equlib pr w dete
 	if ( K > 1) {
 		$("k=2:K; P0=P[1,1]; Pl=P[k,1]; Pu=P[1,k]; Pk=P[k,k]; A = Pk - eye(K-1); Adet = abs(det(A)); ", ctx);
 
-		Log({"MRT det": ctx.Adet});
+		Trace({"MRT det": ctx.Adet});
 
 		if ( ctx.Adet < 1e-3 ) {
-			Log("Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
+			Trace("Proposed process is not ergodic, thus no unique eq prob exist.", ctx.P);
 			return $( [K,K],  $$zero );
 		}
 
 		else {
 			$("wk= -Pu*inv(A);", ctx);
 
-			//Log("man meanRecurTimes", ctx);
+			//Trace("man meanRecurTimes", ctx);
 			ctx.w = [1].concat(ctx.wk[0]);
 
 			$("w = w / sum(w); w = [w]; Z = inv( eye(K) - P + w[ ones(K) , 1:K] ); H = zeros(K,K); ", ctx);
@@ -1841,7 +1844,7 @@ function index(keys, dims) {
 		for (var n=0; n<N; off *= dims[n], n++) 
 			idx += off * parseInt( keys[n] );
 
-	//Log( keys, idx);
+	//Trace( keys, idx);
 	
 	return idx;
 }
@@ -1917,11 +1920,26 @@ function index(keys, dims) {
 
 switch ( process.argv[2] ) {   //< unit tests
 	case "?":
-		Log("unit test with 'node randpr.js [R1 || R2 || ...]'");
+		Trace("unit test with 'node randpr.js [R$ || R1 || R2 || ...]'");
 		break;
-		
+	
+	case "R$":
+		const
+			VM = require("vm"),
+			CTX = VM.createContext(RAN);
+
+		require("repl").start({
+			eval: (cmd, ctx, filename, cb) => {
+				if ( cmd ) 
+					cb( null, VM.runInContext(cmd, CTX));
+			}, 
+			prompt: "$> ", 
+			useGlobal: true
+		});
+		break;
+
 	case "R1":  // mean recurrence times
-		Log( meanRecurTimes(  
+		Trace( meanRecurTimes(  
 			[[0.5,0.25,0.25],[0.5,0,0.5],[0.25,0.25,0.5]]   // regular and ergodic
 /*
 MRT det= 0.375
@@ -1956,7 +1974,7 @@ MRT det= 0.09375
 		break;
 		
 	case "R2":	  // absorption times
-		Log( firstAbsorb( 
+		Trace( firstAbsorb( 
 			[[1,0,0,0,0],[0.5,0,0.5,0,0],[0,0.5,0,0.5,0],[0,0,0.5,0,0.5],[0,0,0,0,1]] // 2 absorbing states
 /*
 { times: [ [ 3 ], [ 3.9999999999999996 ], [ 2.9999999999999996 ] ],
@@ -2260,23 +2278,23 @@ MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 			filter: function (str, ev) {  
 				switch (ev.at) {
 					case "config":
-						//Log(ev);
+						//Trace(ev);
 						str.push(ev);
 						break;
 
 					case "batch":
-						//Log(ev.s,ev.rel_txpr_error);
-						Log(ev);
+						//Trace(ev.s,ev.rel_txpr_error);
+						Trace(ev);
 						break;
 
 					case "end":
-						Log(ev);
+						Trace(ev);
 						var
 							A = ev.stats.mle_tr_probs,
 							B = ev.stats.mle_em_probs,
 							H = ev.stats.mle_holding_times;
 						
-						Log("MLEs", {
+						Trace("MLEs", {
 							holdTimes: JSON.stringify(H),
 							emProbs: JSON.stringify(B),
 							trProbs: JSON.stringify(A)
@@ -2292,7 +2310,7 @@ MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 		});
 		
 		ran.pipe( function (store) {
-			//Log(store);
+			//Trace(store);
 		});
 		break;
 		
@@ -2309,7 +2327,7 @@ MLEs { holdTimes: '[[0,1.0968340824701974],[9.798737174427782,0]]',
 					case "batch":
 					case "config":
 					case "end":
-						Log(JSON.stringify(ev));
+						Trace(JSON.stringify(ev));
 				}
 			},
 			steps: 800  
@@ -2334,7 +2352,7 @@ stats :
 			filter: function (str,ev) {
 				switch (ev.at) {
 					case "jump":
-						Log(ev);
+						Trace(ev);
 						break;
 					default:
 				}
@@ -2388,7 +2406,7 @@ stats :
 
 				learn: function (supercb) {
 					evs.$( "group", (evs) => {
-						Log( evs ? ` supervising ${evs.length} events` : " supervised" );
+						Trace( evs ? ` supervising ${evs.length} events` : " supervised" );
 						
 						if (evs) // feed supervisor
 							supercb(evs);
@@ -2403,17 +2421,17 @@ stats :
 				filter: function (str, ev) {  
 					switch (ev.at) {
 						case "config":
-							Log(ev);
+							Trace(ev);
 							str.push(ev);
 							break;
 
 						case "batch":
-							//Log(ev.s,ev.rel_txpr_error);
-							Log(ev);
+							//Trace(ev.s,ev.rel_txpr_error);
+							Trace(ev);
 							break;
 
 						case "end":
-							//Log(ev);
+							//Trace(ev);
 							str.push(ev);
 							break;
 					}
@@ -2426,7 +2444,7 @@ stats :
 			});
 	
 		ran.pipe( function (store) {
-			Log(store);
+			Trace(store);
 		});
 		/*
  1 '00000111110000000000000000000000000000000000000000'
@@ -2450,11 +2468,11 @@ stats :
 		break;	
 				
 	case "R4.1":  // observation permutations
-		Log(perms([],[2,6,4],[]));
+		Trace(perms([],[2,6,4],[]));
 		break;
 					
 	case "R4.2":  // observation permutations
-		Log(perms([],[2,6,4],[], function (idx,max) {
+		Trace(perms([],[2,6,4],[], function (idx,max) {
 			return idx / max;
 		}));
 		break;
