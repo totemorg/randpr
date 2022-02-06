@@ -1,4 +1,4 @@
-# RANDPR
+# RANDPR [WWW](https://github.com/totemstan/randpr)  [COE](https://sc.appdev.proj.coe/acmesds/randpr)  [SBU](https://gitlab.west.nga.ic.gov/acmesds/randpr)
 
 Generate or learn various random processes.
 
@@ -100,10 +100,6 @@ Clone **RANDPR** from one of its repos:
 	git clone https://sc.appdev.proj.coe/acmesds/randpr
 	git clone https://gitlab.west.nga.ic.gov/acmesds/randpr
 
-Dependent modules:
-
-+ **ENUMS** [WWW](https://github.com/totemstan/enums)  [COE](https://sc.appdev.proj.coe/acmesds/enums)  [SBU](https://gitlab.west.nga.ic.gov/acmesds/enums)  
-
 ### Manage 
 
 	npm test [ ? || R1 || R2 || ... ]	# unit test
@@ -155,7 +151,7 @@ configured in the reverse/learning mode).
 ## RANDPR
 Generates various random processes.
 
-**Requires**: <code>module:stream</code>, <code>module:man</code>  
+**Requires**: <code>module:[man](https://github.com/totemstan/man)</code>, <code>module:stream</code>  
 **Example**  
 ```js
 R2.1 - config methods:

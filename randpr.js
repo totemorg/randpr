@@ -6,8 +6,8 @@ Generates various random processes.
 
 @module RANDPR
 
+@requires [man](https://github.com/totemstan/man)
 @requires stream
-@requires man
 
 @example
 R2.1 - config methods:
