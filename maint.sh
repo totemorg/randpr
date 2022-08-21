@@ -1,1 +1,0 @@
-../totem/maint.sh

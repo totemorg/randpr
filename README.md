@@ -94,11 +94,11 @@ streams to minimize memory usage.
 
 ## Installation
 
-Clone **RANDPR** from one of its repos:
+Clone **RANDPR** from one of its REPOs:
 
-	git clone https://github.com/totemstan/randpr
-	git clone https://sc.appdev.proj.coe/acmesds/randpr
-	git clone https://gitlab.west.nga.ic.gov/acmesds/randpr
+	cd MYPROJECT
+	git clone REPO/totemstan/randpr
+	git clone REPO/totemstan/man
 
 ### Manage 
 
@@ -151,7 +151,7 @@ configured in the reverse/learning mode).
 ## RANDPR
 Generates various random processes.
 
-**Requires**: <code>module:[man](https://github.com/totemstan/man)</code>, <code>module:stream</code>  
+**Requires**: <code>module:[man](https://github.com/totemstan/man)</code>, <code>module:[stream](https://nodejs.org/docs/latest/api/)</code>  
 **Example**  
 ```js
 R2.1 - config methods:

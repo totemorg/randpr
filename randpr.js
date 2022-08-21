@@ -7,7 +7,7 @@ Generates various random processes.
 @module RANDPR
 
 @requires [man](https://github.com/totemstan/man)
-@requires stream
+@requires [stream](https://nodejs.org/docs/latest/api/)
 
 @example
 R2.1 - config methods:
@@ -257,7 +257,7 @@ const
 	// totem modules
 	Trace = (msg, ...args) => `ran>>>${msg}`.trace( args ),
 	
-	$ = require("../man");   // matrix manipulators
+	$ = require("./man");   // matrix manipulators
 
 const { EM, MVN, Copy, Each, Debug } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
@@ -1913,12 +1913,11 @@ function index(keys, dims) {
 ].Extend(Array);
 
 switch ( process.argv[2] ) {   //< unit tests
-	case "R?":
-	case "?":
-		Trace("unit test with 'node randpr.js [R$ || R1 || R2 || ...]'");
-		break;
-	
+	case "$":
 	case "R$":
+		Trace("$", {
+			usage: "unit test with 'node randpr.js [R$ || R1 || R2 || ...]'"
+		});
 		Debug({RAN: module.exports});
 		break;
 
