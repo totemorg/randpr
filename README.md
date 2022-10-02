@@ -1,4 +1,4 @@
-# RANDPR [WWW](https://github.com/totemstan/randpr)  [COE](https://sc.appdev.proj.coe/acmesds/randpr)  [SBU](https://gitlab.west.nga.ic.gov/acmesds/randpr)
+# [RANDPR](https://github.com/totem-man/randpr)
 
 Generate or learn various random processes.
 
@@ -97,8 +97,8 @@ streams to minimize memory usage.
 Clone **RANDPR** from one of its REPOs:
 
 	cd MYPROJECT
-	git clone REPO/totemstan/randpr
-	git clone REPO/totemstan/man
+	git clone REPO/totem-man/randpr
+	git clone REPO/totem-man/man
 
 ### Manage 
 
@@ -122,16 +122,7 @@ then create a new instance:
 		console.log( err ? "something evil is lurking" : "look mom - Im running!");
 	});
 
-where its configuration keys (
-[WWW](http://totem.zapto.org/shares/prm/totem/index.html) 
-[COE](https://totem.west.ile.nga.ic.gov/shares/prm/totem/index.html) 
-[SBU](https://totem.nga.mil/shares/prm/totem/index.html)
-)
-follow the **ENUMS** deep copy conventions (
-[WWW](https://github.com/totemstan/enum) 
-[COE](https://sc.appdev.proj.coe/acmesds/enum) 
-[SBU](https://gitlab.west.nga.ic.gov/acmesds/enum)
-).
+where configuration keys follow [ENUMS deep copy conventions](https://github.com/totem-man/enums)
 
 The instance can then be piped:
 
@@ -421,31 +412,12 @@ Output event filter
 ## Contacting, Contributing, Following
 
 Feel free to 
-* submit and status **TOTEM** issues (
-[WWW](http://totem.zapto.org/issues.view) 
-[COE](https://totem.west.ile.nga.ic.gov/issues.view) 
-[SBU](https://totem.nga.mil/issues.view)
-)  
-* contribute to **TOTEM** notebooks (
-[WWW](http://totem.zapto.org/shares/notebooks/) 
-[COE](https://totem.west.ile.nga.ic.gov/shares/notebooks/) 
-[SBU](https://totem.nga.mil/shares/notebooks/)
-)  
-* revise **TOTEM** requirements (
-[WWW](http://totem.zapto.org/reqts.view) 
-[COE](https://totem.west.ile.nga.ic.gov/reqts.view) 
-[SBU](https://totem.nga.mil/reqts.view), 
-)  
-* browse **TOTEM** holdings (
-[WWW](http://totem.zapto.org/) 
-[COE](https://totem.west.ile.nga.ic.gov/) 
-[SBU](https://totem.nga.mil/)
-)  
-* or follow **TOTEM** milestones (
-[WWW](http://totem.zapto.org/milestones.view) 
-[COE](https://totem.west.ile.nga.ic.gov/milestones.view) 
-[SBU](https://totem.nga.mil/milestones.view)
-).
+* submit and status [TOTEM issues](http://totem.hopto.org/issues.view) 
+* contribute to [TOTEM notebooks](http://totem.hopto.org/shares/notebooks/) 
+* revise [TOTEM requirements](http://totem.hopto.org/reqts.view) 
+* browse [TOTEM holdings](http://totem.hopto.org/) 
+* or follow [TOTEM milestones](http://totem.hopto.org/milestones.view) 
+
 
 ## License
 
