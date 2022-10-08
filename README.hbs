@@ -92,19 +92,13 @@ streams to minimize memory usage.
 * www.stat.berkeley.edu/~pitman
 * www.math.dartmouth.edu/~pw
 
-## Installation
+## Manage
 
-Clone **RANDPR** from one of its REPOs:
-
-	cd MYPROJECT
-	git clone REPO/totem-man/randpr
-	git clone REPO/totem-man/man
-
-### Manage 
-
-	npm test [ ? || R1 || R2 || ... ]	# unit test
-	npm run [ edit || start ]			# Configure environment
-	npm run [ prmprep || prmload ]		# Revise PRM
+	npm install @totemstan/randpr	# install
+	npm run start [ ? | $ | ...]	# Unit test
+	npm run verminor				# Roll minor version
+	npm run vermajor				# Roll major version
+	npm run redoc					# Regen documentation
 
 ## Usage
 

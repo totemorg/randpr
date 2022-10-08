@@ -257,7 +257,7 @@ const
 	// totem modules
 	Trace = (msg, ...args) => `ran>>>${msg}`.trace( args ),
 	
-	$ = require("./man");   // matrix manipulators
+	$ = require("@totemstan/mathjx");   // matrix manipulators
 
 const { EM, MVN, Copy, Each, Debug } = $;
 const { sqrt, floor, round, random, cos, sin, abs, PI, log, exp, min, max} = Math;
