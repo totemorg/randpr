@@ -1,25 +1,25 @@
 {
-  "name": "@totemstan/randpr",
+  "name": "@totemorg/randpr",
   "version": "1.2.0",
   "description": "",
   "main": "randpr.js",
   "scripts": {
-    "verminor": "npm version minor -f",
-    "vermajor": "npm version major -f",
+    "verminor": "npm version minor",
+    "vermajor": "npm version major",
     "test": "node randpr.js ",
     "redoc": "jsdoc2md --template README.hbs --files randpr.js >README.md; git commit -am 'redoc'; git  push agent master"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/acmesds/randpr.git"
+    "url": "git+https://github.com/totemorg/randpr.git"
   },
   "author": "acme software disposal service",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/acmesds/randpr/issues"
+    "url": "https://github.com/totemorg/randpr/issues"
   },
-  "homepage": "https://github.com/acmesds/randpr#readme",
+  "homepage": "https://github.com/totemorg/randpr#readme",
   "dependencies": {
-    "@totemstan/mathjx": "^1.5.0"
+    "@totemorg/mathjx": "^1.8.0"
   }
 }

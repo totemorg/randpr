@@ -102,13 +102,13 @@ streams to minimize memory usage.
 
 ## Usage
 
-Require the module:
+Simply acquire:
 
-	var RAN = require("randpr");
+	const RAN = require("randpr");
 	
 then create a new instance:
 
-	var ran = new RAN({
+	const ran = new RAN({
 		key: value, 						// set key
 		"key.key": value, 					// indexed set
 		"key.key.": value					// indexed append

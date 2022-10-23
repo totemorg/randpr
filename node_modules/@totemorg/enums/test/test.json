@@ -1,0 +1,37 @@
+{
+  "name": "totem",
+  "version": "1.30.0",
+  "description": "bare essentials web service",
+  "main": "totem.js",
+  "scripts": {
+    "startdbs": "source ./maint.sh startdbs",
+    "setdebug": "source ./maint.sh config debug",
+    "setoper": "source ./maint.sh config oper",
+    "setprot": "source ./maint.sh config prot",
+    "setprod": "source ./maint.sh config prod",
+    "verminor": "npm version minor -f",
+    "vermajor": "npm version major -f",
+    "start": "node totem.js start",
+    "relink": "cd node_modules; for f in enums jsdb securelink; do ln -s ../../$f $f; done",
+    "redoc": "jsdoc2md --template README.hbs --files totem.js >README.md; git commit -am 'redoc'; git  push agent master"
+  },
+  "author": "ACME SDS",
+  "license": "ISC",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.3",
+    "http-proxy-agent": "^4.0.1",
+    "js2xmlparser": "^3.0.0",
+    "json2csv": "^3.11.5",
+    "mime": "^1.0.0",
+    "mysql": "^2.17.1",
+    "pcsclite": "^1.0.0",
+    "securelink": "^1.1.0",
+    "smartcard": "^1.0.37",
+    "toobusy-js": "^0.5.1",
+    "xml2js": "^0.4.23",
+    "xml2json": "^0.11.2",
+    "enums": "^1.0.1",
+    "jsdb": "^1.1.0",
+    "socketio": "^1.1.0"
+  }
+}
